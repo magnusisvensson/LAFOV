@@ -43,21 +43,19 @@ if system_file and form_file:
         # === SKOLOR ===
         skolor = pd.read_excel(system_file)
         skolor.columns = skolor.columns.str.strip()
-
+        skolor = skolor[skolor["Kull"] == kull].copy()
         skolor["Grupp"] = skolor["Partnerområde"].apply(get_school_group)
-        skolor = skolor[skolor["Kull"] == kull]
 
         # === STUDENTER ===
         students = pd.read_excel(form_file)
         students.columns = students.columns.str.strip()
-
         students["Grupp"] = students["Bostadsort"].apply(get_student_group)
 
         result = []
         capacity_counter = {}
 
         # =========================
-        # ROTATION (A → B → B → C)
+        # ROTATION (RÄTT MODELL)
         # =========================
         for grupp in students["Grupp"].unique():
 
@@ -85,29 +83,45 @@ if system_file and form_file:
                 capacity_counter[(B, 2)] = capacity_counter.get((B, 2), 0) + 1
                 capacity_counter[(B, 3)] = capacity_counter.get((B, 3), 0) + 1
 
+                # ✅ VIKTIGT: skapa RÄTT outputstruktur
                 result.append({
-                    "Startskola": A,
-                    "År 1": namn,   # A
-                    "År 2": namn,   # B
-                    "År 3": namn,   # B
-                    "År 4": namn,   # C
+                    "Skola": A,
+                    "År 1": namn,
+                    "År 2": "",
+                    "År 3": "",
+                    "År 4": ""
                 })
 
-        df = pd.DataFrame(result).sort_values("Startskola")
+                result.append({
+                    "Skola": B,
+                    "År 1": "",
+                    "År 2": namn,
+                    "År 3": namn,
+                    "År 4": ""
+                })
+
+                result.append({
+                    "Skola": C,
+                    "År 1": "",
+                    "År 2": "",
+                    "År 3": "",
+                    "År 4": namn
+                })
+
+        df = pd.DataFrame(result).sort_values("Skola")
 
         # =========================
-        # EXCEL
+        # EXCEL GENERERING
         # =========================
         wb = Workbook()
         ws = wb.active
 
-        # kolumnbredder
+        # kolumnbredd
         ws.column_dimensions["A"].width = 35
         for col in ["B","C","D","E"]:
             ws.column_dimensions[col].width = 30
 
         # färger
-        fill_white = PatternFill(start_color="FFFFFF", fill_type="solid")
         fill_green = PatternFill(start_color="CCFFCC", fill_type="solid")
         fill_dark = PatternFill(start_color="99CC66", fill_type="solid")
         fill_header = PatternFill(start_color="DDDDDD", fill_type="solid")
@@ -122,23 +136,23 @@ if system_file and form_file:
         ws.append(["Skola", "År 1", "År 2", "År 3", "År 4"])
 
         # =========================
-        # LOOP PER SKOLA
+        # BLOCK PER SKOLA
         # =========================
-        for skola, grp in df.groupby("Startskola"):
+        for skola, grp in df.groupby("Skola"):
 
             start_row = ws.max_row + 1
 
-            # ✅ snygg rubrikrad
+            # rubrik
             ws.append([skola, "", "", "", ""])
 
-            for col in range(1, 6):
+            for col in range(1,6):
                 cell = ws.cell(row=start_row, column=col)
                 cell.font = Font(bold=True)
                 cell.fill = fill_header
 
             ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=5)
 
-            # === STUDENTER ===
+            # studentrader
             for _, r in grp.iterrows():
 
                 ws.append([
@@ -151,31 +165,27 @@ if system_file and form_file:
 
                 row_i = ws.max_row
 
-                # alignment
                 for col in range(2,6):
                     ws.cell(row=row_i, column=col).alignment = align
 
-                # färger (rotation)
-                ws.cell(row=row_i, column=2).fill = fill_white
-                ws.cell(row=row_i, column=3).fill = fill_green  # B
-                ws.cell(row=row_i, column=4).fill = fill_green  # B
-                ws.cell(row=row_i, column=5).fill = fill_dark   # C
+                # färgkodning
+                ws.cell(row=row_i, column=3).fill = fill_green
+                ws.cell(row=row_i, column=4).fill = fill_green
+                ws.cell(row=row_i, column=5).fill = fill_dark
 
-                # inner grid
+                # grid
                 for col in range(1,6):
                     ws.cell(row=row_i, column=col).border = Border(
                         left=thin, right=thin, top=thin, bottom=thin
                     )
 
-                # rad-höjd
                 ws.row_dimensions[row_i].height = 22
 
             end_row = ws.max_row
 
-            # ✅ YTTERBOX FÖR HELA SKOLAN
+            # stor ram
             for row in range(start_row, end_row + 1):
                 for col in range(1,6):
-
                     ws.cell(row=row, column=col).border = Border(
                         left=thick if col == 1 else thin,
                         right=thick if col == 5 else thin,
@@ -183,7 +193,6 @@ if system_file and form_file:
                         bottom=thick if row == end_row else thin
                     )
 
-            # luft mellan skolor
             ws.append(["","","","",""])
             ws.append(["","","","",""])
 
@@ -199,3 +208,4 @@ if system_file and form_file:
 
 else:
     st.info("Ladda upp filer")
+``
