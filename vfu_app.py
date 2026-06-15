@@ -4,7 +4,7 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Border, Side, Alignment, Font
 
-st.title("VFU-system – Placering")
+st.title("VFU-system – Placering (full version)")
 
 system_file = st.file_uploader("1. Ladda översiktsfil", type=["xlsx"])
 form_file = st.file_uploader("2. Ladda formulärsvar", type=["xlsx"])
@@ -44,7 +44,6 @@ if system_file and form_file:
         skolor = pd.read_excel(system_file)
         skolor.columns = skolor.columns.str.strip()
 
-        # ✅ FILTRERING (rätt!)
         skolor = skolor[
             (skolor["Kull"] == kull) &
             (skolor["Inriktning"].str.upper() == "LAFOV")
@@ -52,8 +51,9 @@ if system_file and form_file:
 
         skolor["Grupp"] = skolor["Partnerområde"].apply(get_school_group)
 
-        # kapacitet
         kapacitet_map = dict(zip(skolor["Skolenhet"], skolor["Antal platser"]))
+
+        st.write("✅ Antal skolor:", len(skolor))
 
         # === STUDENTER ===
         students = pd.read_excel(form_file)
@@ -61,10 +61,12 @@ if system_file and form_file:
         students["Grupp"] = students["Bostadsort"].apply(get_student_group)
 
         result = []
+        ej_placerade = []
+
         capacity_counter = {}
 
         # =========================
-        # ROTATION
+        # ROTATION MED FULL KAPACITETSKOLL
         # =========================
         for grupp in students["Grupp"].unique():
 
@@ -79,24 +81,55 @@ if system_file and form_file:
             for i, (_, student) in enumerate(stud_grp.iterrows()):
 
                 namn = f"{student['Förnamn']} {student['Efternamn']}"
+                placed = False
 
                 for shift in range(len(skol_lista)):
+
                     A = skol_lista[(i + shift) % len(skol_lista)]
                     B = skol_lista[(i + 1 + shift) % len(skol_lista)]
                     C = skol_lista[(i + 2 + shift) % len(skol_lista)]
 
-                    if capacity_counter.get((B, 2), 0) < kapacitet_map.get(B, 999):
+                    if (
+                        capacity_counter.get((A,1),0) < kapacitet_map.get(A,999) and
+                        capacity_counter.get((B,2),0) < kapacitet_map.get(B,999) and
+                        capacity_counter.get((B,3),0) < kapacitet_map.get(B,999) and
+                        capacity_counter.get((C,4),0) < kapacitet_map.get(C,999)
+                    ):
+                        placed = True
                         break
 
-                capacity_counter[(B, 2)] = capacity_counter.get((B, 2), 0) + 1
-                capacity_counter[(B, 3)] = capacity_counter.get((B, 3), 0) + 1
+                # ✅ OM INGEN PLATS FINNS
+                if not placed:
+                    ej_placerade.append(namn)
+                    continue
 
-                # ✅ ROTATIONSRESULTAT
+                # ✅ RÄKNA
+                capacity_counter[(A,1)] = capacity_counter.get((A,1),0)+1
+                capacity_counter[(B,2)] = capacity_counter.get((B,2),0)+1
+                capacity_counter[(B,3)] = capacity_counter.get((B,3),0)+1
+                capacity_counter[(C,4)] = capacity_counter.get((C,4),0)+1
+
+                # ✅ ROTATION OUTPUT
                 result.append({"Skola": A, "År 1": namn, "År 2": "", "År 3": "", "År 4": ""})
                 result.append({"Skola": B, "År 1": "", "År 2": namn, "År 3": namn, "År 4": ""})
                 result.append({"Skola": C, "År 1": "", "År 2": "", "År 3": "", "År 4": namn})
 
         df = pd.DataFrame(result)
+
+        # =========================
+        # ANALYS (VIKTIG!)
+        # =========================
+        total_studenter = len(students)
+        placerade = total_studenter - len(ej_placerade)
+
+        st.subheader("✅ Sammanfattning")
+        st.write("Totalt studenter:", total_studenter)
+        st.write("Placerade:", placerade)
+        st.write("Ej placerade:", len(ej_placerade))
+
+        if ej_placerade:
+            st.warning("⚠️ Studenter utan plats:")
+            st.write(ej_placerade)
 
         # =========================
         # KOMPAKT DATA
@@ -109,8 +142,8 @@ if system_file and form_file:
             if skola not in skol_data:
                 skol_data[skola] = {"År 1": [], "År 2": [], "År 3": [], "År 4": []}
 
-            for col in ["År 1", "År 2", "År 3", "År 4"]:
-                if row[col] != "":
+            for col in ["År 1","År 2","År 3","År 4"]:
+                if row[col]:
                     skol_data[skola][col].append(row[col])
 
         # =========================
@@ -120,10 +153,9 @@ if system_file and form_file:
         ws = wb.active
 
         ws.column_dimensions["A"].width = 40
-        for col in ["B","C","D","E"]:
-            ws.column_dimensions[col].width = 30
+        for c in ["B","C","D","E"]:
+            ws.column_dimensions[c].width = 30
 
-        # färger
         fill_green = PatternFill(start_color="CCFFCC", fill_type="solid")
         fill_dark = PatternFill(start_color="99CC66", fill_type="solid")
         fill_header = PatternFill(start_color="DDDDDD", fill_type="solid")
@@ -131,83 +163,74 @@ if system_file and form_file:
         thin = Side(style="thin")
         thick = Side(style="medium")
 
-        align = Alignment(vertical="center", horizontal="left", wrap_text=True)
+        ws.append(["Skola","År 1","År 2","År 3","År 4"])
 
-        ws.append(["Skola", "År 1", "År 2", "År 3", "År 4"])
-
-        # =========================
-        # BLOCK PER SKOLA
-        # =========================
         for skola, data in skol_data.items():
 
             start_row = ws.max_row + 1
 
-            # ✅ räkna studenter (unika)
             unika = set(data["År 1"] + data["År 2"] + data["År 3"] + data["År 4"])
             antal = len(unika)
-            kap = kapacitet_map.get(skola, "-")
+            kap = kapacitet_map.get(skola,"-")
 
-            rubrik = f"{skola} ({antal}/{kap} platser använda)"
+            titel = f"{skola} ({antal}/{kap})"
 
-            ws.append([rubrik, "", "", "", ""])
+            ws.append([titel,"","","",""])
 
             for col in range(1,6):
-                cell = ws.cell(row=start_row, column=col)
-                cell.font = Font(bold=True)
-                cell.fill = fill_header
+                ws.cell(row=start_row, column=col).fill = fill_header
+                ws.cell(row=start_row, column=col).font = Font(bold=True)
 
             ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=5)
 
-            # antal rader
             max_len = max(len(data["År 1"]), len(data["År 2"]), len(data["År 3"]), len(data["År 4"]))
 
             for i in range(max_len):
-
-                row_vals = [
+                vals = [
                     "",
                     data["År 1"][i] if i < len(data["År 1"]) else "",
                     data["År 2"][i] if i < len(data["År 2"]) else "",
                     data["År 3"][i] if i < len(data["År 3"]) else "",
-                    data["År 4"][i] if i < len(data["År 4"]) else "",
+                    data["År 4"][i] if i < len(data["År 4"]) else ""
                 ]
 
-                ws.append(row_vals)
+                ws.append(vals)
+                r = ws.max_row
 
-                row_i = ws.max_row
+                ws.cell(row=r,column=3).fill = fill_green
+                ws.cell(row=r,column=4).fill = fill_green
+                ws.cell(row=r,column=5).fill = fill_dark
 
-                for col in range(2,6):
-                    ws.cell(row=row_i, column=col).alignment = align
-
-                ws.cell(row=row_i, column=3).fill = fill_green
-                ws.cell(row=row_i, column=4).fill = fill_green
-                ws.cell(row=row_i, column=5).fill = fill_dark
-
-                for col in range(1,6):
-                    ws.cell(row=row_i, column=col).border = Border(
-                        left=thin, right=thin, top=thin, bottom=thin
+                for c in range(1,6):
+                    ws.cell(row=r,column=c).border = Border(
+                        left=thin,right=thin,top=thin,bottom=thin
                     )
-
-                ws.row_dimensions[row_i].height = 22
 
             end_row = ws.max_row
 
-            for row in range(start_row, end_row + 1):
-                for col in range(1,6):
-                    ws.cell(row=row, column=col).border = Border(
-                        left=thick if col == 1 else thin,
-                        right=thick if col == 5 else thin,
-                        top=thick if row == start_row else thin,
-                        bottom=thick if row == end_row else thin
+            for row_i in range(start_row, end_row+1):
+                for col_i in range(1,6):
+                    ws.cell(row=row_i,column=col_i).border = Border(
+                        left=thick if col_i==1 else thin,
+                        right=thick if col_i==5 else thin,
+                        top=thick if row_i==start_row else thin,
+                        bottom=thick if row_i==end_row else thin
                     )
 
             ws.append(["","","","",""])
             ws.append(["","","","",""])
 
-        file_name = "kull_resultat.xlsx"
-        wb.save(file_name)
+        # ✅ EXTRA FLÖDE: EJ PLACERADE
+        if ej_placerade:
+            ws.append(["EJ PLACERADE","","","",""])
+            for namn in ej_placerade:
+                ws.append(["", namn, "", "", ""])
 
-        with open(file_name, "rb") as f:
-            st.download_button("⬇️ Ladda ner Excel", f, file_name=file_name)
+        filename = "kull_resultat.xlsx"
+        wb.save(filename)
+
+        with open(filename,"rb") as f:
+            st.download_button("⬇️ Ladda ner Excel", f, file_name=filename)
 
     except Exception as e:
         st.error(e)
