@@ -13,6 +13,7 @@ kull = st.number_input("Kull", value=26)
 def get_student_group(bostadsort):
     bostadsort = str(bostadsort)
 
+    # ✅ Kalmarregion (pendling till Kalmar)
     if any(x in bostadsort for x in ["Kalmar", "Nybro", "Mönsterås"]):
         return "Kalmarregion"
 
@@ -23,6 +24,7 @@ def get_student_group(bostadsort):
         return "Oskarshamn"
 
     return "Övrigt"
+
 
 # === SKOLGRUPP ===
 def get_school_group(partnerområde):
@@ -39,6 +41,7 @@ def get_school_group(partnerområde):
 
     return "Övrigt"
 
+
 if system_file and form_file:
 
     try:
@@ -46,19 +49,26 @@ if system_file and form_file:
         skolor = pd.read_excel(system_file, sheet_name=0)
         skolor.columns = skolor.columns.str.strip()
 
+        st.write("Kolumner i skolfil:", list(skolor.columns))
+
         skolkol = "Skolenhet"
         gruppkol = "Partnerområde"
         kull_kol = "Kull"
         kap_kol = "Antal platser"
 
+        # ✅ skapa grupp
         skolor["Grupp"] = skolor[gruppkol].apply(get_school_group)
 
-        arv_kull = kull - 4
-        skolor = skolor[skolor[kull_kol] == arv_kull]
+        # ✅ VIKTIGT: använd skolor från samma kull (inte arv just nu)
+        skolor = skolor[skolor[kull_kol] == kull]
+
+        st.write("Antal skolor:", len(skolor))
 
         # === STUDENTER ===
         students = pd.read_excel(form_file)
         students.columns = students.columns.str.strip()
+
+        st.write("Kolumner i studentfil:", list(students.columns))
 
         fnamn_kol = "Förnamn"
         enamn_kol = "Efternamn"
@@ -78,6 +88,7 @@ if system_file and form_file:
             skol_grp = skolor[skolor["Grupp"] == grupp]
 
             skol_lista = list(skol_grp[skolkol])
+
             kapacitet_map = dict(zip(skol_grp[skolkol], skol_grp[kap_kol]))
 
             if len(skol_lista) == 0:
@@ -88,7 +99,7 @@ if system_file and form_file:
 
                 namn = f"{student[fnamn_kol]} {student[enamn_kol]}"
 
-                # rotation + kapacitet
+                # ✅ rotation + kapacitet
                 for shift in range(len(skol_lista)):
                     A = skol_lista[(i + shift) % len(skol_lista)]
                     B = skol_lista[(i + 1 + shift) % len(skol_lista)]
@@ -102,6 +113,7 @@ if system_file and form_file:
                 capacity_counter[(B, 2)] = capacity_counter.get((B, 2), 0) + 1
                 capacity_counter[(B, 3)] = capacity_counter.get((B, 3), 0) + 1
 
+                # bygg output
                 result.append([A, namn, "", "", ""])
                 result.append([B, "", namn, namn, ""])
                 result.append([C, "", "", "", namn])
@@ -119,14 +131,15 @@ if system_file and form_file:
         st.subheader("✅ Placering")
         st.dataframe(df_final)
 
-        # export
-        df_final.to_excel("kull_resultat.xlsx", index=False)
+        # === EXPORT ===
+        output_file = "kull_resultat.xlsx"
+        df_final.to_excel(output_file, index=False)
 
-        with open("kull_resultat.xlsx", "rb") as f:
-            st.download_button("⬇️ Ladda ner Excel", f)
+        with open(output_file, "rb") as f:
+            st.download_button("⬇️ Ladda ner Excel", f, file_name=output_file)
 
     except Exception as e:
-        st.error("Fel:")
+        st.error("Fel i appen:")
         st.write(e)
 
 else:
