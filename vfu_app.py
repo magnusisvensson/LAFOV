@@ -44,7 +44,7 @@ if system_file and form_file:
         skolor = pd.read_excel(system_file)
         skolor.columns = skolor.columns.str.strip()
 
-        # ✅ KRITISK FILTRERING
+        # ✅ FILTRERING (rätt!)
         skolor = skolor[
             (skolor["Kull"] == kull) &
             (skolor["Inriktning"].str.upper() == "LAFOV")
@@ -52,12 +52,12 @@ if system_file and form_file:
 
         skolor["Grupp"] = skolor["Partnerområde"].apply(get_school_group)
 
-        st.write("✅ Antal LAFOV-skolor:", len(skolor))
+        # kapacitet
+        kapacitet_map = dict(zip(skolor["Skolenhet"], skolor["Antal platser"]))
 
         # === STUDENTER ===
         students = pd.read_excel(form_file)
         students.columns = students.columns.str.strip()
-
         students["Grupp"] = students["Bostadsort"].apply(get_student_group)
 
         result = []
@@ -72,7 +72,6 @@ if system_file and form_file:
             skol_grp = skolor[skolor["Grupp"] == grupp]
 
             skol_lista = list(skol_grp["Skolenhet"])
-            kap_map = dict(zip(skol_grp["Skolenhet"], skol_grp["Antal platser"]))
 
             if not skol_lista:
                 continue
@@ -86,38 +85,33 @@ if system_file and form_file:
                     B = skol_lista[(i + 1 + shift) % len(skol_lista)]
                     C = skol_lista[(i + 2 + shift) % len(skol_lista)]
 
-                    if capacity_counter.get((B, 2), 0) < kap_map.get(B, 999):
+                    if capacity_counter.get((B, 2), 0) < kapacitet_map.get(B, 999):
                         break
 
                 capacity_counter[(B, 2)] = capacity_counter.get((B, 2), 0) + 1
                 capacity_counter[(B, 3)] = capacity_counter.get((B, 3), 0) + 1
 
-                # ✅ CORRECT ROTATION STRUCTURE
-                result.append({
-                    "Skola": A,
-                    "År 1": namn,
-                    "År 2": "",
-                    "År 3": "",
-                    "År 4": ""
-                })
+                # ✅ ROTATIONSRESULTAT
+                result.append({"Skola": A, "År 1": namn, "År 2": "", "År 3": "", "År 4": ""})
+                result.append({"Skola": B, "År 1": "", "År 2": namn, "År 3": namn, "År 4": ""})
+                result.append({"Skola": C, "År 1": "", "År 2": "", "År 3": "", "År 4": namn})
 
-                result.append({
-                    "Skola": B,
-                    "År 1": "",
-                    "År 2": namn,
-                    "År 3": namn,
-                    "År 4": ""
-                })
+        df = pd.DataFrame(result)
 
-                result.append({
-                    "Skola": C,
-                    "År 1": "",
-                    "År 2": "",
-                    "År 3": "",
-                    "År 4": namn
-                })
+        # =========================
+        # KOMPAKT DATA
+        # =========================
+        skol_data = {}
 
-        df = pd.DataFrame(result).sort_values("Skola")
+        for _, row in df.iterrows():
+            skola = row["Skola"]
+
+            if skola not in skol_data:
+                skol_data[skola] = {"År 1": [], "År 2": [], "År 3": [], "År 4": []}
+
+            for col in ["År 1", "År 2", "År 3", "År 4"]:
+                if row[col] != "":
+                    skol_data[skola][col].append(row[col])
 
         # =========================
         # EXCEL
@@ -125,10 +119,11 @@ if system_file and form_file:
         wb = Workbook()
         ws = wb.active
 
-        ws.column_dimensions["A"].width = 35
+        ws.column_dimensions["A"].width = 40
         for col in ["B","C","D","E"]:
             ws.column_dimensions[col].width = 30
 
+        # färger
         fill_green = PatternFill(start_color="CCFFCC", fill_type="solid")
         fill_dark = PatternFill(start_color="99CC66", fill_type="solid")
         fill_header = PatternFill(start_color="DDDDDD", fill_type="solid")
@@ -143,12 +138,18 @@ if system_file and form_file:
         # =========================
         # BLOCK PER SKOLA
         # =========================
-        for skola, grp in df.groupby("Skola"):
+        for skola, data in skol_data.items():
 
             start_row = ws.max_row + 1
 
-            # rubrik
-            ws.append([skola, "", "", "", ""])
+            # ✅ räkna studenter (unika)
+            unika = set(data["År 1"] + data["År 2"] + data["År 3"] + data["År 4"])
+            antal = len(unika)
+            kap = kapacitet_map.get(skola, "-")
+
+            rubrik = f"{skola} ({antal}/{kap} platser använda)"
+
+            ws.append([rubrik, "", "", "", ""])
 
             for col in range(1,6):
                 cell = ws.cell(row=start_row, column=col)
@@ -157,16 +158,20 @@ if system_file and form_file:
 
             ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=5)
 
-            # rader
-            for _, r in grp.iterrows():
+            # antal rader
+            max_len = max(len(data["År 1"]), len(data["År 2"]), len(data["År 3"]), len(data["År 4"]))
 
-                ws.append([
+            for i in range(max_len):
+
+                row_vals = [
                     "",
-                    r["År 1"],
-                    r["År 2"],
-                    r["År 3"],
-                    r["År 4"]
-                ])
+                    data["År 1"][i] if i < len(data["År 1"]) else "",
+                    data["År 2"][i] if i < len(data["År 2"]) else "",
+                    data["År 3"][i] if i < len(data["År 3"]) else "",
+                    data["År 4"][i] if i < len(data["År 4"]) else "",
+                ]
+
+                ws.append(row_vals)
 
                 row_i = ws.max_row
 
@@ -186,7 +191,6 @@ if system_file and form_file:
 
             end_row = ws.max_row
 
-            # outer box
             for row in range(start_row, end_row + 1):
                 for col in range(1,6):
                     ws.cell(row=row, column=col).border = Border(
