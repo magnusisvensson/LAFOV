@@ -41,7 +41,6 @@ def get_school_group(partnerområde):
 
     return "Övrigt"
 
-
 if system_file and form_file:
 
     try:
@@ -101,73 +100,75 @@ if system_file and form_file:
                 capacity_counter[(B, 2)] = capacity_counter.get((B, 2), 0) + 1
                 capacity_counter[(B, 3)] = capacity_counter.get((B, 3), 0) + 1
 
+                # ✅ korrekt studentrad (med skolbyten)
                 result.append({
-                    "Skola_A": A,
-                    "Skola_B": B,
-                    "Skola_C": C,
-                    "Student": namn
+                    "Startskola": A,
+                    "År 1": namn,
+                    "År 2": namn,
+                    "År 3": namn,
+                    "År 4": namn,
+                    "Skola_År2": B,
+                    "Skola_År4": C
                 })
 
         df = pd.DataFrame(result)
 
-        # === BYGG STUDENT-RADER ===
-        rows = []
+        # sortera
+        df = df.sort_values(by="Startskola")
 
-        for _, r in df.iterrows():
-            rows.append([
-                r["Skola_A"],   # Skola
-                r["Student"],   # År 1
-                r["Skola_B"],   # År 2 skolnamn
-                r["Skola_B"],   # År 3 skolnamn
-                r["Skola_C"]    # År 4 skolnamn
-            ])
-
-        df_rows = pd.DataFrame(rows, columns=["Skola", "År 1", "År 2", "År 3", "År 4"])
-
-        # === VISA BLOCK I APPEN ===
+        # === VISA BLOCK I APP ===
         st.subheader("✅ Placering per skola")
 
-        for skola, grupp in df_rows.groupby("Skola"):
-            st.markdown(f"### {skola}")
-            st.dataframe(grupp[["År 1", "År 2", "År 3", "År 4"]].reset_index(drop=True))
+        for skola, grupp_df in df.groupby("Startskola"):
 
-        # === SKAPA FÄRGAD EXCEL ===
+            st.markdown(f"### {skola}")
+
+            vis = grupp_df[["År 1", "År 2", "År 3", "År 4"]].reset_index(drop=True)
+            st.dataframe(vis)
+
+        # === EXCEL EXPORT ===
         wb = Workbook()
         ws = wb.active
 
         # färger
         color_y1 = PatternFill(start_color="FFFFFF", fill_type="solid")
-        color_y2 = PatternFill(start_color="CCFFCC", fill_type="solid")
-        color_y3 = PatternFill(start_color="CCFFCC", fill_type="solid")
-        color_y4 = PatternFill(start_color="99CC66", fill_type="solid")
+        color_y2 = PatternFill(start_color="CCFFCC", fill_type="solid")  # B-skolan
+        color_y3 = PatternFill(start_color="CCFFCC", fill_type="solid")  # B-skolan
+        color_y4 = PatternFill(start_color="99CC66", fill_type="solid")  # C-skolan
 
         # rubrik
         ws.append(["Skola", "År 1", "År 2", "År 3", "År 4"])
 
-        # skriv blockvis
-        for skola, grupp in df_rows.groupby("Skola"):
+        for skola, grupp_df in df.groupby("Startskola"):
 
             ws.append([skola, "", "", "", ""])
 
-            for _, row in grupp.iterrows():
-                ws.append([
+            for _, row in grupp_df.iterrows():
+
+                excel_row = [
                     "",
                     row["År 1"],
                     row["År 2"],
                     row["År 3"],
                     row["År 4"]
-                ])
+                ]
+
+                ws.append(excel_row)
+
+                last_row = ws.max_row
+
+                # färga bas
+                ws.cell(row=last_row, column=2).fill = color_y1
+
+                # markera B-skolan (år 2–3)
+                ws.cell(row=last_row, column=3).fill = color_y2
+                ws.cell(row=last_row, column=4).fill = color_y3
+
+                # markera skolbyte (År 4)
+                ws.cell(row=last_row, column=5).fill = color_y4
 
             ws.append(["", "", "", "", ""])
 
-        # färga kolumner
-        for row in ws.iter_rows(min_row=2):
-            row[1].fill = color_y1
-            row[2].fill = color_y2
-            row[3].fill = color_y3
-            row[4].fill = color_y4
-
-        # spara
         output_file = "kull_resultat.xlsx"
         wb.save(output_file)
 
