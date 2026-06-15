@@ -12,7 +12,7 @@ form_file = st.file_uploader("2. Ladda formulärsvar", type=["xlsx"])
 kull = st.number_input("Kull", value=26)
 
 # =========================
-# GRUPPLOGIK
+# GRUPPER
 # =========================
 def get_student_group(bostadsort):
     bostadsort = str(bostadsort)
@@ -43,19 +43,28 @@ if system_file and form_file:
         # === SKOLOR ===
         skolor = pd.read_excel(system_file)
         skolor.columns = skolor.columns.str.strip()
-        skolor = skolor[skolor["Kull"] == kull].copy()
+
+        # ✅ KRITISK FILTRERING
+        skolor = skolor[
+            (skolor["Kull"] == kull) &
+            (skolor["Inriktning"].str.upper() == "LAFOV")
+        ].copy()
+
         skolor["Grupp"] = skolor["Partnerområde"].apply(get_school_group)
+
+        st.write("✅ Antal LAFOV-skolor:", len(skolor))
 
         # === STUDENTER ===
         students = pd.read_excel(form_file)
         students.columns = students.columns.str.strip()
+
         students["Grupp"] = students["Bostadsort"].apply(get_student_group)
 
         result = []
         capacity_counter = {}
 
         # =========================
-        # ROTATION (RÄTT MODELL)
+        # ROTATION
         # =========================
         for grupp in students["Grupp"].unique():
 
@@ -83,7 +92,7 @@ if system_file and form_file:
                 capacity_counter[(B, 2)] = capacity_counter.get((B, 2), 0) + 1
                 capacity_counter[(B, 3)] = capacity_counter.get((B, 3), 0) + 1
 
-                # ✅ VIKTIGT: skapa RÄTT outputstruktur
+                # ✅ CORRECT ROTATION STRUCTURE
                 result.append({
                     "Skola": A,
                     "År 1": namn,
@@ -111,28 +120,24 @@ if system_file and form_file:
         df = pd.DataFrame(result).sort_values("Skola")
 
         # =========================
-        # EXCEL GENERERING
+        # EXCEL
         # =========================
         wb = Workbook()
         ws = wb.active
 
-        # kolumnbredd
         ws.column_dimensions["A"].width = 35
         for col in ["B","C","D","E"]:
             ws.column_dimensions[col].width = 30
 
-        # färger
         fill_green = PatternFill(start_color="CCFFCC", fill_type="solid")
         fill_dark = PatternFill(start_color="99CC66", fill_type="solid")
         fill_header = PatternFill(start_color="DDDDDD", fill_type="solid")
 
-        # borders
         thin = Side(style="thin")
         thick = Side(style="medium")
 
         align = Alignment(vertical="center", horizontal="left", wrap_text=True)
 
-        # header
         ws.append(["Skola", "År 1", "År 2", "År 3", "År 4"])
 
         # =========================
@@ -152,7 +157,7 @@ if system_file and form_file:
 
             ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=5)
 
-            # studentrader
+            # rader
             for _, r in grp.iterrows():
 
                 ws.append([
@@ -168,12 +173,10 @@ if system_file and form_file:
                 for col in range(2,6):
                     ws.cell(row=row_i, column=col).alignment = align
 
-                # färgkodning
                 ws.cell(row=row_i, column=3).fill = fill_green
                 ws.cell(row=row_i, column=4).fill = fill_green
                 ws.cell(row=row_i, column=5).fill = fill_dark
 
-                # grid
                 for col in range(1,6):
                     ws.cell(row=row_i, column=col).border = Border(
                         left=thin, right=thin, top=thin, bottom=thin
@@ -183,7 +186,7 @@ if system_file and form_file:
 
             end_row = ws.max_row
 
-            # stor ram
+            # outer box
             for row in range(start_row, end_row + 1):
                 for col in range(1,6):
                     ws.cell(row=row, column=col).border = Border(
@@ -196,7 +199,6 @@ if system_file and form_file:
             ws.append(["","","","",""])
             ws.append(["","","","",""])
 
-        # spara
         file_name = "kull_resultat.xlsx"
         wb.save(file_name)
 
@@ -208,3 +210,4 @@ if system_file and form_file:
 
 else:
     st.info("Ladda upp filer")
+``
