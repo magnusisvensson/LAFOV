@@ -76,7 +76,9 @@ if system_file and form_file:
         best_log = None
         best_unplaced = 999
 
-        # ===== OPTIMERING =====
+        # =========================
+        # OPTIMERING
+        # =========================
         for _ in range(30):
 
             result = []
@@ -208,43 +210,106 @@ if system_file and form_file:
 
         df = pd.DataFrame(best_result)
 
-        # ===== LAYOUT =====
+        # =========================
+        # ✅ PIXEL LAYOUT
+        # =========================
         skol_data={}
         for _,row in df.iterrows():
             s=row["Skola"]
+
             if s not in skol_data:
                 skol_data[s]={"År 1":[],"År 2":[],"År 3":[],"År 4":[]}
+
             for c in ["År 1","År 2","År 3","År 4"]:
                 if c in row and row[c]!="":
                     skol_data[s][c].append(row[c])
 
-        sorted_skolor=sorted(skol_data.keys())
+        def region_order(s):
+            return {"Kalmarregion":1,"Oskarshamn":2,"Karlskrona":3}.get(region_map.get(s,""),0)
+
+        sorted_skolor=sorted(skol_data.keys(), key=lambda x:(region_order(x),x))
 
         wb=Workbook()
         ws=wb.active
 
+        ws.column_dimensions["A"].width=40
+        for c in ["B","C","D","E"]:
+            ws.column_dimensions[c].width=30
+
+        fill_header = PatternFill(start_color="DDDDDD", fill_type="solid")
+        fill_green = PatternFill(start_color="CCFFCC", fill_type="solid")
+        fill_dark = PatternFill(start_color="99CC66", fill_type="solid")
+
+        thin = Side(style="thin")
+        thick = Side(style="medium")
+
+        align = Alignment(vertical="center", wrap_text=True)
+
         ws.append(["Skola","År 1","År 2","År 3","År 4"])
 
+        current_region=None
+
         for skola in sorted_skolor:
-            kap = kap_map.get(skola,"-")
+
+            region = region_map.get(skola,"")
+
+            if region != current_region:
+                ws.append([region.upper()])
+                current_region = region
+
+            kap = kap_map.get(skola,0)
+
+            start_row = ws.max_row + 1
+
             ws.append([f"{skola} (max {int(kap)})"])
 
-            data=skol_data[skola]
-            max_len=max(len(v) for v in data.values())
+            for col in range(1,6):
+                ws.cell(start_row,col).fill = fill_header
+                ws.cell(start_row,col).font = Font(bold=True)
+
+            ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=5)
+
+            data = skol_data[skola]
+            max_len = max(len(v) for v in data.values())
 
             for i in range(max_len):
+
                 ws.append([
                     "",
-                    data["År 1"][i] if i<len(data["År 1"]) else "",
-                    data["År 2"][i] if i<len(data["År 2"]) else "",
-                    data["År 3"][i] if i<len(data["År 3"]) else "",
-                    data["År 4"][i] if i<len(data["År 4"]) else ""
+                    data["År 1"][i] if i < len(data["År 1"]) else "",
+                    data["År 2"][i] if i < len(data["År 2"]) else "",
+                    data["År 3"][i] if i < len(data["År 3"]) else "",
+                    data["År 4"][i] if i < len(data["År 4"]) else ""
                 ])
 
+                r = ws.max_row
+
+                for col in range(2,6):
+                    ws.cell(r,col).alignment = align
+
+                ws.cell(r,3).fill = fill_green
+                ws.cell(r,4).fill = fill_green
+                ws.cell(r,5).fill = fill_dark
+
+                for col in range(1,6):
+                    ws.cell(r,col).border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+            end_row = ws.max_row
+
+            for rr in range(start_row, end_row+1):
+                for cc in range(1,6):
+                    ws.cell(rr,cc).border = Border(
+                        left=thick if cc==1 else thin,
+                        right=thick if cc==5 else thin,
+                        top=thick if rr==start_row else thin,
+                        bottom=thick if rr==end_row else thin
+                    )
+
             ws.append([])
             ws.append([])
 
-        ws2=wb.create_sheet("Rapport")
+        # ===== RAPPORT =====
+        ws2 = wb.create_sheet("Rapport")
         ws2.append(["Student","Status","Kommentar"])
 
         for r in best_log:
@@ -263,3 +328,4 @@ if system_file and form_file:
 
 else:
     st.info("Ladda upp filer")
+``
