@@ -3,7 +3,7 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font
 
-st.title("VFU – Placering")
+st.title("VFU – Placering (Fungerande A‑B‑B‑C)")
 
 system_file = st.file_uploader("1. Översiktsfil", type=["xlsx"])
 form_file = st.file_uploader("2. Formulärsvar", type=["xlsx"])
@@ -27,7 +27,7 @@ def school_region(partner):
 
 if system_file and form_file:
 
-    # ----- SKOLOR -----
+    # ===== SKOLOR =====
     skolor=pd.read_excel(system_file)
     skolor.columns=skolor.columns.str.strip()
 
@@ -44,8 +44,9 @@ if system_file and form_file:
     }
 
     region_schools={
-        reg: skolor[skolor["Region"]==reg]["Skolenhet"].tolist()
-        for reg in ["Kalmar","Oskarshamn","Karlskrona"]
+        "Kalmar": skolor[skolor["Region"]=="Kalmar"]["Skolenhet"].tolist(),
+        "Oskarshamn": skolor[skolor["Region"]=="Oskarshamn"]["Skolenhet"].tolist(),
+        "Karlskrona": skolor[skolor["Region"]=="Karlskrona"]["Skolenhet"].tolist()
     }
 
     def school_sort_key(s):
@@ -53,8 +54,7 @@ if system_file and form_file:
         order={"Kalmar":0,"Oskarshamn":1,"Karlskrona":2}
         return (order.get(region,3),s)
 
-
-    # ----- STUDENTER -----
+    # ===== STUDENTER =====
     students=pd.read_excel(form_file, sheet_name="Data")
     students.columns=students.columns.str.strip()
 
@@ -69,7 +69,7 @@ if system_file and form_file:
 
     # ===== PLACERING PER ÅR =====
     cap_used={}
-    year_assignments={1:{},2:{},3:{},4:{}}
+    year_assign={1:{},2:{},4:{}}
 
     def has_space(s,y):
         return cap_used.get((s,y),0) < kap.get(s,0)
@@ -77,54 +77,56 @@ if system_file and form_file:
     def use(s,y):
         cap_used[(s,y)] = cap_used.get((s,y),0)+1
 
-    for year in [1,2,4]:  # OBS: hoppa 3
+    # ✅ Fyll År1, År2, År4 för ALLA
+    for year in [1,2,4]:
+
         for idx, stud in enumerate(student_list):
 
             namn=stud["Namn"]
             region=stud["Region"]
             skol_lista=region_schools.get(region,[])
 
-            if not skol_lista:
-                continue
-
             start=(idx+year) % len(skol_lista)
             ordered=skol_lista[start:]+skol_lista[:start]
 
             for s in ordered:
                 if has_space(s,year):
-                    year_assignments[year][namn]=s
+                    year_assign[year][namn]=s
                     use(s,year)
                     break
 
-    # ✅ KRITISK: År3 = År2
-    for namn, skola in year_assignments[2].items():
-        year_assignments[3][namn]=skola
+    # ✅ År3 = År2 (VIKTIGASTE RADEN)
+    year_assign[3] = year_assign[2].copy()
 
 
-    # ===== BYGG DATA =====
-    skol_data={}
+    # ===== BYGG STUDENTDATA =====
+    student_rows={}
 
     for stud in student_list:
 
         namn=stud["Namn"]
 
-        data={
-            "År1":year_assignments[1].get(namn,""),
-            "År2":year_assignments[2].get(namn,""),
-            "År3":year_assignments[3].get(namn,""),
-            "År4":year_assignments[4].get(namn,"")
+        student_rows[namn]={
+            "År1":year_assign[1].get(namn,""),
+            "År2":year_assign[2].get(namn,""),
+            "År3":year_assign[3].get(namn,""),
+            "År4":year_assign[4].get(namn,"")
         }
 
-        for year,skola in data.items():
-            if skola=="":
+
+    # ===== SKOLVY =====
+    school_data={}
+
+    for student,data in student_rows.items():
+        for year,school in data.items():
+            if school=="":
                 continue
 
-            skol_data.setdefault(skola,{})
-            skol_data[skola].setdefault(namn,{
+            school_data.setdefault(school,{})
+            school_data[school].setdefault(student,{
                 "År1":"","År2":"","År3":"","År4":""
             })
-
-            skol_data[skola][namn][year]=namn
+            school_data[school][student][year]=student
 
 
     # ===== EXCEL =====
@@ -133,7 +135,6 @@ if system_file and form_file:
     ws.title="Placeringar"
 
     ws.append(["Skola","År1","År2","År3","År4"])
-
     fill=PatternFill(start_color="DDDDDD",fill_type="solid")
 
     for skola in sorted(kap.keys(), key=school_sort_key):
@@ -153,8 +154,8 @@ if system_file and form_file:
               for _ in range(max_platser)]
 
         i=0
-        if skola in skol_data:
-            for student,data in skol_data[skola].items():
+        if skola in school_data:
+            for student,data in school_data[skola].items():
                 if i>=max_platser:
                     break
                 rows[i]=data
@@ -164,6 +165,7 @@ if system_file and form_file:
             ws.append(["",row["År1"],row["År2"],row["År3"],row["År4"]])
 
         ws.append([])
+
 
     # ===== RAPPORT =====
     ws2=wb.create_sheet("Rapport")
@@ -180,3 +182,4 @@ if system_file and form_file:
 
 else:
     st.info("Ladda upp båda filer")
+``
