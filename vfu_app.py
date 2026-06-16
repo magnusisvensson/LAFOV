@@ -1,4 +1,5 @@
-import streamlit as stimport streamimport pandas as pd
+import streamlit as st
+import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font
 
@@ -21,15 +22,17 @@ def school_region(partner, skola):
     p = str(partner).lower()
     s = str(skola).lower()
 
+    # specialfall
     if "ljungnäs" in s or "blomstermåla" in s:
         return "Kalmar"
+
     if "oskarshamn" in p:
         return "Oskarshamn"
     if "karlskrona" in p or "ronneby" in p:
         return "Karlskrona"
     return "Kalmar"
 
-# ===== GEO =====
+# ===== AVSTÅND (enkel approx) =====
 geo = {
     "Kalmar": (56.66,16.36),
     "Oskarshamn": (57.26,16.45),
@@ -45,7 +48,7 @@ def dist(a,b):
 # ===== MAIN =====
 if system_file and form_file:
 
-    # SKOLOR
+    # ---- SKOLOR ----
     skolor = pd.read_excel(system_file)
     skolor.columns = skolor.columns.str.strip()
 
@@ -55,12 +58,13 @@ if system_file and form_file:
     ].copy()
 
     skolor["Region"] = skolor.apply(
-        lambda r: school_region(r["Partnerområde"], r["Skolenhet"]), axis=1
+        lambda r: school_region(r["Partnerområde"], r["Skolenhet"]),
+        axis=1
     )
 
     kap = dict(zip(skolor["Skolenhet"], skolor["Antal platser"]))
 
-    # STUDENTER
+    # ---- STUDENTER ----
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
 
@@ -75,6 +79,7 @@ if system_file and form_file:
     skol_data = {}
     logg = {}
 
+    # ===== HELP =====
     def has_space(skola,år,n):
         return cap_used.get((skola,år),0)+n <= kap.get(skola,999)
 
@@ -83,15 +88,16 @@ if system_file and form_file:
 
     def add(skola,student,col):
         skol_data.setdefault(skola,{})
-        skol_data[skola].setdefault(student,
-            {"År1":"","År2":"","År3":"","År4":""})
+        skol_data[skola].setdefault(student,{
+            "År1":"","År2":"","År3":"","År4":""
+        })
         skol_data[skola][student][col]=student
 
-    # ===== FULL PLACERING KRAV =====
-    def find_full_rotation(skol_lista, n):
+    # ===== FULL ROTATION = KRAV =====
+    def find_full_rotation(lista, n):
 
-        for i in range(len(skol_lista)-2):
-            A,B,C = skol_lista[i], skol_lista[i+1], skol_lista[i+2]
+        for i in range(len(lista)-2):
+            A,B,C = lista[i], lista[i+1], lista[i+2]
 
             if all([
                 has_space(A,1,n),
@@ -99,7 +105,7 @@ if system_file and form_file:
                 has_space(B,3,n),
                 has_space(C,4,n)
             ]):
-                return (A,B,C)
+                return A,B,C
 
         return None
 
@@ -117,7 +123,6 @@ if system_file and form_file:
         val = find_full_rotation(möjliga, n)
 
         if val:
-
             A,B,C = val
 
             for s in names:
@@ -126,7 +131,10 @@ if system_file and form_file:
                 add(B,s,"År3")
                 add(C,s,"År4")
 
-            use(A,1,n); use(B,2,n); use(B,3,n); use(C,4,n)
+            use(A,1,n)
+            use(B,2,n)
+            use(B,3,n)
+            use(C,4,n)
 
             for s in names:
                 logg[s]={"Status":"OK","Dist":dist(region,"Kalmar")}
@@ -137,8 +145,8 @@ if system_file and form_file:
 
     # ===== LOOP =====
     stud_list = students.to_dict("records")
-    i = 0
 
+    i = 0
     while i < len(stud_list):
 
         if place(stud_list[i:i+3]):
@@ -178,26 +186,28 @@ if system_file and form_file:
 
         ws.merge_cells(start_row=r,start_column=1,end_row=r,end_column=5)
 
+        # exakt antal rader
         rows = [{"År1":"","År2":"","År3":"","År4":""}
                 for _ in range(max_platser)]
 
         used = 0
-
         for student,data in skol_data[skola].items():
 
             if used >= max_platser:
                 break
 
-            rows[used]["År1"] = data["År1"]
-            rows[used]["År2"] = data["År2"]
-            rows[used]["År3"] = data["År3"]
-            rows[used]["År4"] = data["År4"]
-
+            rows[used] = data
             used += 1
 
         for rdata in rows:
 
-            ws.append(["",rdata["År1"],rdata["År2"],rdata["År3"],rdata["År4"]])
+            ws.append(["",
+                rdata["År1"],
+                rdata["År2"],
+                rdata["År3"],
+                rdata["År4"]
+            ])
+
             rr = ws.max_row
 
             for c in range(2,6):
@@ -213,18 +223,18 @@ if system_file and form_file:
 
         ws.append([])
 
-    # RAPPORT
+    # ===== RAPPORT =====
     ws2 = wb.create_sheet("Rapport")
     ws2.append(["Student","Status"])
 
     for s,v in logg.items():
         ws2.append([s,v["Status"]])
 
-    file="kull_resultat.xlsx"
+    file = "kull_resultat.xlsx"
     wb.save(file)
 
     with open(file,"rb") as f:
-        st.download_button("⬇️ Ladda ner Excel",f,file_name=file)
+        st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
 
 else:
     st.info("Ladda upp båda filer")
