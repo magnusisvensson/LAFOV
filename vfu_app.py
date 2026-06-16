@@ -10,19 +10,16 @@ system_file = st.file_uploader("1. Ladda översiktsfil", type=["xlsx"])
 form_file = st.file_uploader("2. Ladda formulärsvar", type=["xlsx"])
 
 kull = st.number_input("Använd skolenheter planerade för kull:", value=26)
-program = st.selectbox("För program:", ["LAFOV","LAGRV","LGFRI"])
+program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
 
-# ===== GEO (förenklad & stabil) =====
 def get_region(text):
     t = str(text).lower()
-
     if "oskarshamn" in t:
         return "Oskarshamn"
     if "karlskrona" in t or "ronneby" in t:
         return "Karlskrona"
     return "Kalmar"
 
-# ===== KÖR ENDAST NÄR FILER FINNS =====
 if system_file is not None and form_file is not None:
 
     try:
@@ -48,16 +45,32 @@ if system_file is not None and form_file is not None:
         students["Namn"] = students[fn] + " " + students[ln]
         students["Region"] = students[bost].apply(get_region)
 
-        # ===== DATASTRUKTUR =====
+        # ===== GRUPPINDelning =====
+        group_size = 3
+        student_list = students.to_dict("records")
+
+        groups = [
+            student_list[i:i+group_size]
+            for i in range(0, len(student_list), group_size)
+        ]
+
         cap_used = {}
         skol_data = {}
         logg = []
 
-        # ===== PLACERING =====
-        for _, s in students.iterrows():
+        # ===== Hjälpfunktion =====
+        def add(skola, student, col):
+            skol_data.setdefault(skola,{})
+            skol_data[skola].setdefault(student,{
+                "År1":"","År2":"","År3":"","År4":""
+            })
+            skol_data[skola][student][col]=student
 
-            namn = s["Namn"]
-            region = s["Region"]
+        # ===== PLACERA GRUPPER =====
+        for group in groups:
+
+            region = group[0]["Region"]
+            namn_lista = [s["Namn"] for s in group]
 
             möjliga = skolor[
                 skolor["Partnerområde"].str.contains(region, case=False, na=False)
@@ -69,7 +82,7 @@ if system_file is not None and form_file is not None:
             placed = False
 
             # ===== OSKARSHAMN / KARLSKRONA =====
-            if region in ["Oskarshamn", "Karlskrona"]:
+            if region in ["Oskarshamn","Karlskrona"]:
 
                 for i in range(len(möjliga)-1):
 
@@ -77,32 +90,24 @@ if system_file is not None and form_file is not None:
                     B = möjliga[i+1]
 
                     if (
-                        cap_used.get((A,1),0) < kap.get(A,999) and
-                        cap_used.get((B,2),0) < kap.get(B,999) and
-                        cap_used.get((A,3),0) < kap.get(A,999) and
-                        cap_used.get((B,4),0) < kap.get(B,999)
+                        cap_used.get((A,1),0) + len(group) <= kap.get(A,999) and
+                        cap_used.get((B,2),0) + len(group) <= kap.get(B,999) and
+                        cap_used.get((A,3),0) + len(group) <= kap.get(A,999) and
+                        cap_used.get((B,4),0) + len(group) <= kap.get(B,999)
                     ):
 
+                        for namn in namn_lista:
+                            add(A,namn,"År1")
+                            add(B,namn,"År2")
+                            add(A,namn,"År3")
+                            add(B,namn,"År4")
+
+                        cap_used[(A,1)] = cap_used.get((A,1),0) + len(group)
+                        cap_used[(B,2)] = cap_used.get((B,2),0) + len(group)
+                        cap_used[(A,3)] = cap_used.get((A,3),0) + len(group)
+                        cap_used[(B,4)] = cap_used.get((B,4),0) + len(group)
+
                         placed = True
-
-                        # uppdatera kapacitet
-                        cap_used[(A,1)] = cap_used.get((A,1),0)+1
-                        cap_used[(B,2)] = cap_used.get((B,2),0)+1
-                        cap_used[(A,3)] = cap_used.get((A,3),0)+1
-                        cap_used[(B,4)] = cap_used.get((B,4),0)+1
-
-                        # lägg in i struktur
-                        for skola in [A,B]:
-                            skol_data.setdefault(skola,{})
-
-                        skol_data[A].setdefault(namn,{"År1":"","År2":"","År3":"","År4":""})
-                        skol_data[B].setdefault(namn,{"År1":"","År2":"","År3":"","År4":""})
-
-                        skol_data[A][namn]["År1"] = namn
-                        skol_data[B][namn]["År2"] = namn
-                        skol_data[A][namn]["År3"] = namn
-                        skol_data[B][namn]["År4"] = namn
-
                         break
 
             # ===== KALMAR =====
@@ -115,37 +120,33 @@ if system_file is not None and form_file is not None:
                     C = möjliga[i+2]
 
                     if (
-                        cap_used.get((A,1),0) < kap.get(A,999) and
-                        cap_used.get((B,2),0) < kap.get(B,999) and
-                        cap_used.get((B,3),0) < kap.get(B,999) and
-                        cap_used.get((C,4),0) < kap.get(C,999)
+                        cap_used.get((A,1),0) + len(group) <= kap.get(A,999) and
+                        cap_used.get((B,2),0) + len(group) <= kap.get(B,999) and
+                        cap_used.get((B,3),0) + len(group) <= kap.get(B,999) and
+                        cap_used.get((C,4),0) + len(group) <= kap.get(C,999)
                     ):
 
+                        for namn in namn_lista:
+                            add(A,namn,"År1")
+                            add(B,namn,"År2")
+                            add(B,namn,"År3")
+                            add(C,namn,"År4")
+
+                        cap_used[(A,1)] = cap_used.get((A,1),0) + len(group)
+                        cap_used[(B,2)] = cap_used.get((B,2),0) + len(group)
+                        cap_used[(B,3)] = cap_used.get((B,3),0) + len(group)
+                        cap_used[(C,4)] = cap_used.get((C,4),0) + len(group)
+
                         placed = True
-
-                        cap_used[(A,1)] = cap_used.get((A,1),0)+1
-                        cap_used[(B,2)] = cap_used.get((B,2),0)+1
-                        cap_used[(B,3)] = cap_used.get((B,3),0)+1
-                        cap_used[(C,4)] = cap_used.get((C,4),0)+1
-
-                        for skola in [A,B,C]:
-                            skol_data.setdefault(skola,{})
-
-                        skol_data[A].setdefault(namn,{"År1":"","År2":"","År3":"","År4":""})
-                        skol_data[B].setdefault(namn,{"År1":"","År2":"","År3":"","År4":""})
-                        skol_data[C].setdefault(namn,{"År1":"","År2":"","År3":"","År4":""})
-
-                        skol_data[A][namn]["År1"] = namn
-                        skol_data[B][namn]["År2"] = namn
-                        skol_data[B][namn]["År3"] = namn
-                        skol_data[C][namn]["År4"] = namn
-
                         break
 
+            # ===== FALLBACK (split grupp) =====
             if not placed:
-                logg.append({"Student":namn,"Status":"Får ej plats"})
+                for s in group:
+                    logg.append({"Student":s["Namn"],"Status":"Får ej plats"})
             else:
-                logg.append({"Student":namn,"Status":"OK"})
+                for s in group:
+                    logg.append({"Student":s["Namn"],"Status":"OK"})
 
         # ===== EXCEL =====
         wb = Workbook()
@@ -175,7 +176,7 @@ if system_file is not None and form_file is not None:
 
             ws.append([])
 
-        # rapport
+        # ===== RAPPORT =====
         ws2 = wb.create_sheet("Rapport")
         ws2.append(["Student","Status"])
 
