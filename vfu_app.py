@@ -12,7 +12,9 @@ form_file = st.file_uploader("2. Ladda formulärsvar", type=["xlsx"])
 kull = st.number_input("Kull", value=26)
 program = st.selectbox("Välj inriktning", ["LAFOV", "LAGRV", "LGFRI"])
 
-# ========= REGION =========
+# =========================
+# REGION
+# =========================
 def get_region(text):
     text = str(text)
     if any(x in text for x in ["Kalmar","Nybro","Mönsterås"]):
@@ -23,14 +25,18 @@ def get_region(text):
         return "Karlskrona"
     return "Kalmarregion"
 
-# ========= TEXTMATCHNING =========
+# =========================
+# TEXTMATCHNING
+# =========================
 def clean_text(text):
     return str(text).lower().replace(" ","").replace("-","")
 
 def match_school(a,s):
     return clean_text(a) in clean_text(s) or clean_text(s) in clean_text(a)
 
-# ========= AUTO-KOLUMNER =========
+# =========================
+# AUTO-KOLUMNER
+# =========================
 def find_column(cols,keywords):
     for c in cols:
         if any(k.lower() in c.lower() for k in keywords):
@@ -66,10 +72,13 @@ if system_file and form_file:
         students["Namn"] = students[fn] + " " + students[ln]
         students["Region"] = students[bost].apply(get_region)
 
-        best_result, best_log = None, None
+        best_result = None
+        best_log = None
         best_unplaced = 999
 
-        # ===== OPTIMERING =====
+        # =========================
+        # OPTIMERING
+        # =========================
         for _ in range(30):
 
             result = []
@@ -178,6 +187,7 @@ if system_file and form_file:
                             logg.append({"Student":namn,"Status":"Får ej plats","Kommentar":""})
                             continue
 
+                        # ✅ FIX (huvudbugg!)
                         cap[(A,1)] = cap.get((A,1),0)+1
                         cap[(B,2)] = cap.get((B,2),0)+1
                         cap[(B,3)] = cap.get((B,3),0)+1
@@ -202,14 +212,82 @@ if system_file and form_file:
 
         df = pd.DataFrame(best_result)
 
-        # ===== EXCEL (kort version) =====
+        # =========================
+        # ✅ HÄR KOMMER DIN LAYOUT (ORÖRD)
+        # =========================
+        skol_data={}
+        for _,row in df.iterrows():
+            s=row["Skola"]
+            if s not in skol_data:
+                skol_data[s]={"År 1":[],"År 2":[],"År 3":[],"År 4":[]}
+            for c in skol_data[s]:
+                if c in row and row[c] != "":
+                    skol_data[s][c].append(row[c])
+
+        def region_order(s):
+            return {"Kalmarregion":1,"Oskarshamn":2,"Karlskrona":3}.get(region_map.get(s,""),0)
+
+        sorted_skolor=sorted(skol_data.keys(), key=lambda x:(region_order(x),x))
+
         wb=Workbook()
         ws=wb.active
-        ws.append(df.columns.tolist())
 
-        for _,row in df.iterrows():
-            ws.append(row.tolist())
+        ws.column_dimensions["A"].width=40
+        for c in ["B","C","D","E"]:
+            ws.column_dimensions[c].width=28
 
+        fill_header=PatternFill(start_color="DDDDDD",fill_type="solid")
+        fill_green=PatternFill(start_color="CCFFCC",fill_type="solid")
+        fill_dark=PatternFill(start_color="99CC66",fill_type="solid")
+
+        thin=Side(style="thin")
+        thick=Side(style="medium")
+
+        ws.append(["Skola","År 1","År 2","År 3","År 4"])
+
+        current_region=None
+
+        for skola in sorted_skolor:
+
+            region=region_map.get(skola,"")
+
+            if region!=current_region:
+                ws.append([region.upper()])
+                current_region=region
+
+            data=skol_data[skola]
+            kap=kap_map.get(skola,"-")
+            antal=len(set(sum(data.values(),[])))
+
+            start=ws.max_row+1
+            ws.append([f"{skola} ({antal}/{kap})"])
+
+            ws.merge_cells(start_row=start,start_column=1,end_row=start,end_column=5)
+
+            for col in range(1,6):
+                ws.cell(start,col).fill=fill_header
+                ws.cell(start,col).font=Font(bold=True)
+
+            max_len=max(len(v) for v in data.values())
+
+            for i in range(max_len):
+                ws.append([
+                    "",
+                    data["År 1"][i] if i<len(data["År 1"]) else "",
+                    data["År 2"][i] if i<len(data["År 2"]) else "",
+                    data["År 3"][i] if i<len(data["År 3"]) else "",
+                    data["År 4"][i] if i<len(data["År 4"]) else ""
+                ])
+
+                r=ws.max_row
+                ws.cell(r,3).fill=fill_green
+                ws.cell(r,4).fill=fill_green
+                ws.cell(r,5).fill=fill_dark
+
+            ws.append([])
+            ws.append([])
+
+        # RAPPORT
         ws2=wb.create_sheet("Rapport")
         ws2.append(["Student","Status","Kommentar"])
         for r in best_log:
@@ -228,4 +306,3 @@ if system_file and form_file:
 
 else:
     st.info("Ladda upp filer")
-
