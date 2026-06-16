@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 from openpyxl import Workbook
@@ -20,8 +19,8 @@ def get_region(text):
     return "Kalmar"
 
 def school_region(partner, skola):
-    p = str(partner).lower()
     s = str(skola).lower()
+    p = str(partner).lower()
 
     if "ljungnäs" in s or "blomstermåla" in s:
         return "Kalmar"
@@ -31,7 +30,7 @@ def school_region(partner, skola):
         return "Karlskrona"
     return "Kalmar"
 
-# ===== GEO approx =====
+# ===== GEO (enkel) =====
 geo = {
     "Kalmar": (56.66,16.36),
     "Oskarshamn": (57.26,16.45),
@@ -47,6 +46,7 @@ def dist(a,b):
 # ===== MAIN =====
 if system_file and form_file:
 
+    # ----- SKOLOR -----
     skolor = pd.read_excel(system_file)
     skolor.columns = skolor.columns.str.strip()
 
@@ -61,6 +61,7 @@ if system_file and form_file:
 
     kap = dict(zip(skolor["Skolenhet"], skolor["Antal platser"]))
 
+    # ----- STUDENTER -----
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
 
@@ -68,39 +69,37 @@ if system_file and form_file:
     ln=[c for c in students.columns if "efternamn" in c.lower()][0]
     bost=[c for c in students.columns if "bostadsort" in c.lower()][0]
 
-    students["Namn"] = students[fn] + " " + students[ln]
+    students["Namn"] = students[fn]+" "+students[ln]
     students["Region"] = students[bost].apply(get_region)
 
     cap_used = {}
     skol_data = {}
     logg = {}
-    group_id = 0
 
+    # ===== HELP =====
     def has_space(skola,år,n):
         return cap_used.get((skola,år),0)+n <= kap.get(skola,999)
 
     def use(skola,år,n):
         cap_used[(skola,år)] = cap_used.get((skola,år),0)+n
 
-    def add(skola,student,col,group):
+    def add(skola,student,col):
         skol_data.setdefault(skola,{})
-        skol_data[skola].setdefault(student,{
-            "År1":"","År2":"","År3":"","År4":"",
-            "Group":group
-        })
-        skol_data[skola][student][col] = student
+        skol_data[skola].setdefault(student,
+            {"År1":"","År2":"","År3":"","År4":""})
+        skol_data[skola][student][col]=student
 
     # ===== PLACERING =====
-    def place(group, gid):
+    def place(group):
 
         region = group[0]["Region"]
         names = [s["Namn"] for s in group]
         n = len(names)
 
         regional = skolor[skolor["Region"]==region]["Skolenhet"].tolist()
-        all_schools = list(skolor["Skolenhet"])
+        alla = list(skolor["Skolenhet"])
 
-        möjliga = regional + [s for s in all_schools if s not in regional]
+        möjliga = regional + [s for s in alla if s not in regional]
 
         # 1. full rotation
         for i in range(len(möjliga)-2):
@@ -114,10 +113,10 @@ if system_file and form_file:
             ]):
 
                 for s in names:
-                    add(A,s,"År1",gid)
-                    add(B,s,"År2",gid)
-                    add(B,s,"År3",gid)
-                    add(C,s,"År4",gid)
+                    add(A,s,"År1")
+                    add(B,s,"År2")
+                    add(B,s,"År3")
+                    add(C,s,"År4")
 
                 use(A,1,n); use(B,2,n); use(B,3,n); use(C,4,n)
 
@@ -126,13 +125,13 @@ if system_file and form_file:
 
                 return True
 
-        # 2. fallback per år
+        # 2. fallback – en plats per år
         for skola in möjliga:
             for år,col in [(1,"År1"),(2,"År2"),(3,"År3"),(4,"År4")]:
                 if has_space(skola,år,n):
 
                     for s in names:
-                        add(skola,s,col,gid)
+                        add(skola,s,col)
 
                     use(skola,år,n)
 
@@ -144,18 +143,15 @@ if system_file and form_file:
         return False
 
     stud_list = students.to_dict("records")
-
     i = 0
+
     while i < len(stud_list):
 
-        if place(stud_list[i:i+3], group_id):
-            group_id += 1
+        if place(stud_list[i:i+3]):
             i += 3
-        elif place(stud_list[i:i+2], group_id):
-            group_id += 1
+        elif place(stud_list[i:i+2]):
             i += 2
-        elif place([stud_list[i]], group_id):
-            group_id += 1
+        elif place([stud_list[i]]):
             i += 1
         else:
             logg[stud_list[i]["Namn"]]={"Status":"Får ej plats","Dist":0}
@@ -169,9 +165,9 @@ if system_file and form_file:
     for c in ["B","C","D","E"]:
         ws.column_dimensions[c].width = 25
 
-    fill_header = PatternFill(start_color="DDDDDD",fill_type="solid")
-    fill_yellow = PatternFill(start_color="FFE699",fill_type="solid")
-    fill_red = PatternFill(start_color="FF9999",fill_type="solid")
+    fill_header = PatternFill(start_color="DDDDDD", fill_type="solid")
+    fill_yellow = PatternFill(start_color="FFE699", fill_type="solid")
+    fill_red = PatternFill(start_color="FF9999", fill_type="solid")
 
     ws.append(["Skola","År1","År2","År3","År4"])
 
@@ -188,19 +184,27 @@ if system_file and form_file:
 
         ws.merge_cells(start_row=r,start_column=1,end_row=r,end_column=5)
 
-        rows = [{"År1":"","År2":"","År3":"","År4":""} for _ in range(max_platser)]
+        # ✅ FIXAD RADLOGIK
+        rows = [{"År1":"","År2":"","År3":"","År4":""}
+                for _ in range(max_platser)]
+
+        used = 0
 
         for student,data in skol_data[skola].items():
 
-            idx = data["Group"] % max_platser
+            if used >= max_platser:
+                break
 
-            for col in ["År1","År2","År3","År4"]:
-                if data[col]:
-                    rows[idx][col] = student
+            rows[used]["År1"] = data["År1"]
+            rows[used]["År2"] = data["År2"]
+            rows[used]["År3"] = data["År3"]
+            rows[used]["År4"] = data["År4"]
 
-        for row_data in rows:
+            used += 1
 
-            ws.append(["",row_data["År1"],row_data["År2"],row_data["År3"],row_data["År4"]])
+        for rdata in rows:
+
+            ws.append(["",rdata["År1"],rdata["År2"],rdata["År3"],rdata["År4"]])
             rr = ws.max_row
 
             for c in range(2,6):
@@ -216,6 +220,7 @@ if system_file and form_file:
 
         ws.append([])
 
+    # ----- RAPPORT -----
     ws2 = wb.create_sheet("Rapport")
     ws2.append(["Student","Status"])
 
