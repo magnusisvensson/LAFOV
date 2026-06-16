@@ -1,9 +1,10 @@
+
 import streamlit as st
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font
 
-st.title("VFU – Placering (stabil version)")
+st.title("VFU – Placering")
 
 system_file = st.file_uploader("1. Översiktsfil", type=["xlsx"])
 form_file = st.file_uploader("2. Formulärsvar", type=["xlsx"])
@@ -45,7 +46,7 @@ if system_file and form_file:
 
     skolor["Region"] = skolor["Partnerområde"].apply(school_region)
 
-    # ✅ säker kapacitet (fixar crash)
+    # säker kapacitet
     kap = {}
     for _, r in skolor.iterrows():
         try:
@@ -81,8 +82,10 @@ if system_file and form_file:
             skol_data[skola][student] = {
                 "År1": "", "År2": "", "År3": "", "År4": ""
             }
-        skol_data[skola][student][år] = student
 
+        # ✅ KRITISK: skriv bara om tomt (hindrar dubletter)
+        if skol_data[skola][student][år] == "":
+            skol_data[skola][student][år] = student
 
     # ===== PLACERING =====
     def place_student(student):
@@ -92,7 +95,7 @@ if system_file and form_file:
 
         skol_lista = list(skolor["Skolenhet"])
 
-        # ------ 1. PERFEKT ROTATION ------
+        # ----- 1. PERFEKT ROTATION -----
         for i in range(len(skol_lista) - 2):
 
             A, B, C = skol_lista[i], skol_lista[i+1], skol_lista[i+2]
@@ -135,15 +138,25 @@ if system_file and form_file:
                     logg[namn] = {"Status":"OK"}
                     return
 
-        # ------ 2. FALLBACK (FYLL ALLTID) ------
+        # ----- 2. FALLBACK (KORRIGERAD) -----
         år_lista = [("År1",1),("År2",2),("År3",3),("År4",4)]
+        used_skolor = set()
 
         for årnamn, årnr in år_lista:
+
             placerad = False
+
             for skola in skol_lista:
+
+                if skola in used_skolor:
+                    continue
+
                 if has_space(skola, årnr):
+
                     add(skola, namn, årnamn)
                     use(skola, årnr)
+
+                    used_skolor.add(skola)
                     placerad = True
                     break
 
@@ -151,13 +164,12 @@ if system_file and form_file:
                 logg[namn] = {"Status":"Får ej plats"}
                 return
 
-        logg[namn] = {"Status":"OK*"}  # fallback
+        logg[namn] = {"Status":"OK*"}
 
 
-    # ===== KÖR ALLA =====
+    # ===== KÖR =====
     for stud in students.to_dict("records"):
         place_student(stud)
-
 
     # ===== EXCEL =====
     wb = Workbook()
@@ -165,7 +177,7 @@ if system_file and form_file:
 
     ws.append(["Skola","År1","År2","År3","År4"])
 
-    header_fill = PatternFill(start_color="DDDDDD", fill_type="solid")
+    fill = PatternFill(start_color="DDDDDD", fill_type="solid")
 
     for skola in skol_data:
 
@@ -175,7 +187,7 @@ if system_file and form_file:
         r = ws.max_row
 
         for c in range(1,6):
-            ws.cell(r,c).fill = header_fill
+            ws.cell(r,c).fill = fill
             ws.cell(r,c).font = Font(bold=True)
 
         ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=5)
@@ -185,37 +197,29 @@ if system_file and form_file:
             for _ in range(max_platser)
         ]
 
-        idx = 0
+        i = 0
         for student, data in skol_data[skola].items():
-            if idx >= max_platser:
+            if i >= max_platser:
                 break
-            rows[idx] = data
-            idx += 1
+            rows[i] = data
+            i += 1
 
-        for rad in rows:
-            ws.append([
-                "",
-                rad["År1"],
-                rad["År2"],
-                rad["År3"],
-                rad["År4"]
-            ])
+        for row in rows:
+            ws.append(["", row["År1"], row["År2"], row["År3"], row["År4"]])
 
         ws.append([])
 
-
-    # ---- RAPPORT ----
+    # ----- RAPPORT -----
     ws2 = wb.create_sheet("Rapport")
     ws2.append(["Student","Status"])
 
-    for s, v in logg.items():
-        ws2.append([s, v["Status"]])
-
+    for s,v in logg.items():
+        ws2.append([s,v["Status"]])
 
     file = "kull_resultat.xlsx"
     wb.save(file)
 
-    with open(file, "rb") as f:
+    with open(file,"rb") as f:
         st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
 
 else:
