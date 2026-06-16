@@ -8,8 +8,8 @@ st.title("VFU-system – Placering")
 system_file = st.file_uploader("1. Översiktsfil", type=["xlsx"])
 form_file = st.file_uploader("2. Formulärsvar", type=["xlsx"])
 
-kull = st.number_input("Kull", value=26)
-program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
+kull = st.number_input("Använd skolor planerade för kull:", value=26)
+program = st.selectbox("Inom program:", ["LAFOV","LAGRV","LGFRI"])
 
 
 # ===== REGION =====
