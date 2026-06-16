@@ -3,15 +3,13 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font
 
-# ===== UI =====
-st.title("VFU – Placering (A‑B‑B‑C korrekt)")
+st.title("VFU – Placering (korrekt A‑B‑B‑C)")
 
 system_file = st.file_uploader("1. Översiktsfil", type=["xlsx"])
 form_file = st.file_uploader("2. Formulärsvar", type=["xlsx"])
 
 kull = st.number_input("Använd skolor planerade för kull:", value=26)
 program = st.selectbox("Inom program:", ["LAFOV","LAGRV","LGFRI"])
-
 
 # ===== REGION =====
 def get_region(text):
@@ -30,11 +28,10 @@ def school_region(partner):
         return "Karlskrona"
     return "Kalmar"
 
-
 # ===== MAIN =====
 if system_file and form_file:
 
-    # ===== SKOLOR =====
+    # ----- SKOLOR -----
     skolor = pd.read_excel(system_file)
     skolor.columns = skolor.columns.str.strip()
 
@@ -45,6 +42,7 @@ if system_file and form_file:
 
     skolor["Region"] = skolor["Partnerområde"].apply(school_region)
 
+    # kapacitet
     kap = {}
     for _, r in skolor.iterrows():
         try:
@@ -52,19 +50,20 @@ if system_file and form_file:
         except:
             kap[r["Skolenhet"]] = 0
 
-    # dela upp per region ✅
+    # skolor per region
     region_schools = {
         "Kalmar": skolor[skolor["Region"]=="Kalmar"]["Skolenhet"].tolist(),
         "Oskarshamn": skolor[skolor["Region"]=="Oskarshamn"]["Skolenhet"].tolist(),
         "Karlskrona": skolor[skolor["Region"]=="Karlskrona"]["Skolenhet"].tolist()
     }
 
+    # sortering
     def school_sort_key(skola):
         region = skolor.loc[skolor["Skolenhet"]==skola,"Region"].values[0]
         order = {"Kalmar":0,"Oskarshamn":1,"Karlskrona":2}
         return (order.get(region,3), skola)
 
-    # ===== STUDENTER =====
+    # ----- STUDENTER -----
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
 
@@ -79,44 +78,41 @@ if system_file and form_file:
 
     cap_used = {}
     skol_data = {}
+    logg = {}
 
+    # ===== HELP =====
     def has_space(s,y):
         return cap_used.get((s,y),0) < kap.get(s,0)
 
     def use(s,y):
-        cap_used[(s,y)] = cap_used.get((s,y),0) + 1
+        cap_used[(s,y)] = cap_used.get((s,y),0)+1
 
-    def add(s,student,y):
+    def add(s,student,year):
         skol_data.setdefault(s,{})
         skol_data[s].setdefault(student,{
             "År1":"","År2":"","År3":"","År4":""
         })
-        skol_data[s][student][y] = student
+        skol_data[s][student][year] = student
 
-
-    # ===== PLACERING PER STUDENT (A-B-B-C) =====
-    for idx, stud in enumerate(student_list):
+    # ===== PLACERING (ALL-OR-NOTHING A-B-B-C) =====
+    for stud in student_list:
 
         namn = stud["Namn"]
         region = stud["Region"]
 
         skol_lista = region_schools.get(region, [])
-
-        if len(skol_lista) < 3:
-            continue
-
-        # rotation startindex ✅
-        start = idx % len(skol_lista)
-        ordered = skol_lista[start:] + skol_lista[:start]
-
-        A, B, C = ordered[0], ordered[1], ordered[2]
-
-        # ✅ kontrollera plats – annars fallback inom region
         placed = False
 
-        for i in range(len(skol_lista)-2):
+        if len(skol_lista) < 3:
+            logg[namn] = "Ej placerad"
+            continue
 
-            A, B, C = ordered[i], ordered[i+1], ordered[i+2]
+        # 🔥 testa ALLA kombinationer
+        for i in range(len(skol_lista)):
+
+            A = skol_lista[i]
+            B = skol_lista[(i+1) % len(skol_lista)]
+            C = skol_lista[(i+2) % len(skol_lista)]
 
             if all([
                 has_space(A,1),
@@ -135,27 +131,12 @@ if system_file and form_file:
                 use(B,3)
                 use(C,4)
 
+                logg[namn] = "OK"
                 placed = True
                 break
 
-        # fallback: sprid men få 4 år
         if not placed:
-
-            used = set()
-
-            for year, label in [(1,"År1"),(2,"År2"),(3,"År3"),(4,"År4")]:
-
-                for s in skol_lista:
-
-                    if s in used:
-                        continue
-
-                    if has_space(s,year):
-
-                        add(s,namn,label)
-                        use(s,year)
-                        used.add(s)
-                        break
+            logg[namn] = "Ej placerad"
 
 
     # ===== EXCEL =====
@@ -183,13 +164,13 @@ if system_file and form_file:
         rows = [{"År1":"","År2":"","År3":"","År4":""}
                 for _ in range(max_platser)]
 
-        i = 0
+        i=0
         if skola in skol_data:
             for student,data in skol_data[skola].items():
-                if i >= max_platser:
+                if i>=max_platser:
                     break
-                rows[i] = data
-                i += 1
+                rows[i]=data
+                i+=1
 
         for row in rows:
             ws.append(["",row["År1"],row["År2"],row["År3"],row["År4"]])
@@ -201,9 +182,9 @@ if system_file and form_file:
     ws2.append(["Student","Status"])
 
     for s in students["Namn"]:
-        ws2.append([s,"OK"])
+        ws2.append([s, logg.get(s,"Ej placerad")])
 
-    file = "kull_resultat.xlsx"
+    file="kull_resultat.xlsx"
     wb.save(file)
 
     with open(file,"rb") as f:
