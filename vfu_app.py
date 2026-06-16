@@ -10,7 +10,7 @@ system_file = st.file_uploader("1. Ladda översiktsfil", type=["xlsx"])
 form_file = st.file_uploader("2. Ladda formulärsvar", type=["xlsx"])
 
 kull = st.number_input("Använd skolenheter planerade för kull:", value=26)
-program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
+program = st.selectbox("För program:", ["LAFOV","LAGRV","LGFRI"])
 
 # ===== GEO (förenklad & stabil) =====
 def get_region(text):
