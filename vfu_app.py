@@ -19,20 +19,26 @@ def get_region(text):
     return "Kalmar"
 
 def school_region(partner, skola):
-    p = str(partner).lower()
     s = str(skola).lower()
+    p = str(partner).lower()
 
-    # specialfall
     if "ljungnäs" in s or "blomstermåla" in s:
         return "Kalmar"
-
     if "oskarshamn" in p:
         return "Oskarshamn"
     if "karlskrona" in p or "ronneby" in p:
         return "Karlskrona"
     return "Kalmar"
 
-# ===== AVSTÅND (enkel approx) =====
+def school_sort_key(skola):
+    region = skolor.loc[
+        skolor["Skolenhet"] == skola, "Region"
+    ].values[0]
+
+    order = {"Kalmar":0, "Oskarshamn":1, "Karlskrona":2}
+    return (order.get(region,3), skola)
+
+# ===== GEO =====
 geo = {
     "Kalmar": (56.66,16.36),
     "Oskarshamn": (57.26,16.45),
@@ -48,7 +54,6 @@ def dist(a,b):
 # ===== MAIN =====
 if system_file and form_file:
 
-    # ---- SKOLOR ----
     skolor = pd.read_excel(system_file)
     skolor.columns = skolor.columns.str.strip()
 
@@ -64,7 +69,6 @@ if system_file and form_file:
 
     kap = dict(zip(skolor["Skolenhet"], skolor["Antal platser"]))
 
-    # ---- STUDENTER ----
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
 
@@ -78,8 +82,8 @@ if system_file and form_file:
     cap_used = {}
     skol_data = {}
     logg = {}
+    placed_students = set()
 
-    # ===== HELP =====
     def has_space(skola,år,n):
         return cap_used.get((skola,år),0)+n <= kap.get(skola,999)
 
@@ -88,31 +92,52 @@ if system_file and form_file:
 
     def add(skola,student,col):
         skol_data.setdefault(skola,{})
-        skol_data[skola].setdefault(student,{
-            "År1":"","År2":"","År3":"","År4":""
-        })
-        skol_data[skola][student][col]=student
+        if student not in skol_data[skola]:
+            skol_data[skola][student] = {
+                "År1":"","År2":"","År3":"","År4":""
+            }
 
-    # ===== FULL ROTATION = KRAV =====
-    def find_full_rotation(lista, n):
+        if skol_data[skola][student][col] == "":
+            skol_data[skola][student][col] = student
+
+    # ===== ROTATION =====
+    def find_rotation(lista, region, n):
 
         for i in range(len(lista)-2):
-            A,B,C = lista[i], lista[i+1], lista[i+2]
 
-            if all([
-                has_space(A,1,n),
-                has_space(B,2,n),
-                has_space(B,3,n),
-                has_space(C,4,n)
-            ]):
-                return A,B,C
+            A = lista[i]
+            B = lista[i+1]
+            C = lista[i+2]
+
+            # specialregion
+            if region in ["Oskarshamn","Karlskrona"]:
+
+                if all([
+                    has_space(A,1,n),
+                    has_space(B,2,n),
+                    has_space(A,3,n),
+                    has_space(B,4,n)
+                ]):
+                    return ("ABAB",A,B,C)
+
+            else:
+                if all([
+                    has_space(A,1,n),
+                    has_space(B,2,n),
+                    has_space(B,3,n),
+                    has_space(C,4,n)
+                ]):
+                    return ("ABBC",A,B,C)
 
         return None
 
     def place(group):
 
+        names = [s["Namn"] for s in group if s["Namn"] not in placed_students]
+        if not names:
+            return False
+
         region = group[0]["Region"]
-        names = [s["Namn"] for s in group]
         n = len(names)
 
         regional = skolor[skolor["Region"]==region]["Skolenhet"].tolist()
@@ -120,43 +145,60 @@ if system_file and form_file:
 
         möjliga = regional + [s for s in alla if s not in regional]
 
-        val = find_full_rotation(möjliga, n)
+        val = find_rotation(möjliga, region, n)
 
         if val:
-            A,B,C = val
+
+            typ,A,B,C = val
 
             for s in names:
-                add(A,s,"År1")
-                add(B,s,"År2")
-                add(B,s,"År3")
-                add(C,s,"År4")
 
-            use(A,1,n)
-            use(B,2,n)
-            use(B,3,n)
-            use(C,4,n)
+                if typ == "ABAB":
+                    add(A,s,"År1")
+                    add(B,s,"År2")
+                    add(A,s,"År3")
+                    add(B,s,"År4")
+                else:
+                    add(A,s,"År1")
+                    add(B,s,"År2")
+                    add(B,s,"År3")
+                    add(C,s,"År4")
 
-            for s in names:
+                placed_students.add(s)
                 logg[s]={"Status":"OK","Dist":dist(region,"Kalmar")}
+
+            if typ == "ABAB":
+                use(A,1,n); use(B,2,n); use(A,3,n); use(B,4,n)
+            else:
+                use(A,1,n); use(B,2,n); use(B,3,n); use(C,4,n)
 
             return True
 
         return False
 
-    # ===== LOOP =====
+    # ===== DYNAMISKA GRUPPER =====
     stud_list = students.to_dict("records")
 
     i = 0
     while i < len(stud_list):
 
-        if place(stud_list[i:i+3]):
-            i += 3
-        elif place(stud_list[i:i+2]):
-            i += 2
-        elif place([stud_list[i]]):
-            i += 1
-        else:
-            logg[stud_list[i]["Namn"]]={"Status":"Får ej plats","Dist":0}
+        placed = False
+
+        for size in [3,2,1]:
+
+            group = stud_list[i:i+size]
+            if len(group) < size:
+                continue
+
+            if place(group):
+                i += size
+                placed = True
+                break
+
+        if not placed:
+            namn = stud_list[i]["Namn"]
+            if namn not in placed_students:
+                logg[namn]={"Status":"Får ej plats","Dist":0}
             i += 1
 
     # ===== EXCEL =====
@@ -173,7 +215,7 @@ if system_file and form_file:
 
     ws.append(["Skola","År1","År2","År3","År4"])
 
-    for skola in sorted(skol_data):
+    for skola in sorted(skol_data, key=school_sort_key):
 
         max_platser = int(kap.get(skola,0))
 
@@ -186,27 +228,18 @@ if system_file and form_file:
 
         ws.merge_cells(start_row=r,start_column=1,end_row=r,end_column=5)
 
-        # exakt antal rader
         rows = [{"År1":"","År2":"","År3":"","År4":""}
                 for _ in range(max_platser)]
 
-        used = 0
+        idx = 0
         for student,data in skol_data[skola].items():
-
-            if used >= max_platser:
+            if idx >= max_platser:
                 break
-
-            rows[used] = data
-            used += 1
+            rows[idx] = data
+            idx += 1
 
         for rdata in rows:
-
-            ws.append(["",
-                rdata["År1"],
-                rdata["År2"],
-                rdata["År3"],
-                rdata["År4"]
-            ])
+            ws.append(["",rdata["År1"],rdata["År2"],rdata["År3"],rdata["År4"]])
 
             rr = ws.max_row
 
