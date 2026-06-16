@@ -11,7 +11,6 @@ form_file = st.file_uploader("2. Ladda formulärsvar", type=["xlsx"])
 
 kull = st.number_input("Kull", value=26)
 
-# ✅ VAL AV PROGRAM
 program = st.selectbox("Välj inriktning", ["LAFOV", "LAGRV", "LGFRI"])
 
 # =========================
@@ -39,13 +38,10 @@ def match_school(a, s):
 if system_file and form_file:
 
     try:
-        # =========================
-        # SKOLOR
-        # =========================
+        # === SKOLOR ===
         skolor = pd.read_excel(system_file)
         skolor.columns = skolor.columns.str.strip()
 
-        # ✅ filtrera på valt program
         skolor = skolor[
             (skolor["Kull"] == kull) &
             (skolor["Inriktning"].str.upper() == program)
@@ -56,9 +52,7 @@ if system_file and form_file:
         kap_map = dict(zip(skolor["Skolenhet"], skolor["Antal platser"]))
         region_map = dict(zip(skolor["Skolenhet"], skolor["Region"]))
 
-        # =========================
-        # STUDENTER
-        # =========================
+        # === STUDENTER ===
         students = pd.read_excel(form_file)
         students.columns = students.columns.str.strip()
         students["Region"] = students["Bostadsort"].apply(get_region)
@@ -91,13 +85,12 @@ if system_file and form_file:
                     namn = f"{student['Förnamn']} {student['Efternamn']}"
                     ank_raw = str(student.get(ank_kol, "")).strip()
 
-                    # --- filtrera anknytning
+                    # filtrera anknytning
                     if ank_raw.lower() in ["", "ingen", "-", "nej"]:
                         skol_lista = region_skolor
                         exkluderade = []
                     else:
                         ank_list = [a.strip() for a in ank_raw.split(",")]
-
                         skol_lista = []
                         exkluderade = []
 
@@ -115,12 +108,11 @@ if system_file and form_file:
                     kommentar = ""
 
                     # =========================
-                    # LGFRI (SPECIAL)
+                    # LGFRI
                     # =========================
                     if program == "LGFRI":
 
                         for shift in range(len(skol_lista)):
-
                             A = skol_lista[(i+shift)%len(skol_lista)]
                             B = skol_lista[(i+1+shift)%len(skol_lista)]
 
@@ -134,11 +126,7 @@ if system_file and form_file:
 
                         if not placed:
                             ej_placerade.append(namn)
-                            logg.append({
-                                "Student": namn,
-                                "Status": "Får ej plats",
-                                "Kommentar": ""
-                            })
+                            logg.append({"Student": namn, "Status": "Får ej plats", "Kommentar": ""})
                             continue
 
                         capacity_counter[(A,1)] = capacity_counter.get((A,1),0)+1
@@ -148,11 +136,7 @@ if system_file and form_file:
                         result.append({"Skola":A,"År 1":namn,"År 2":namn,"År 3":""})
                         result.append({"Skola":B,"År 1":"","År 2":"","År 3":namn})
 
-                    # =========================
-                    # LAFOV / LAGRV
-                    # =========================
                     else:
-
                         # FULL ROTATION
                         for shift in range(len(skol_lista)):
                             A = skol_lista[(i+shift)%len(skol_lista)]
@@ -189,11 +173,7 @@ if system_file and form_file:
 
                         if not placed:
                             ej_placerade.append(namn)
-                            logg.append({
-                                "Student": namn,
-                                "Status": "Får ej plats",
-                                "Kommentar": ""
-                            })
+                            logg.append({"Student": namn, "Status": "Får ej plats", "Kommentar": ""})
                             continue
 
                         capacity_counter[(A,1)] = capacity_counter.get((A,1),0)+1
@@ -209,11 +189,7 @@ if system_file and form_file:
                         status = "Avvikelse"
                         kommentar += " Anknytning påverkade."
 
-                    logg.append({
-                        "Student": namn,
-                        "Status": status,
-                        "Kommentar": kommentar.strip()
-                    })
+                    logg.append({"Student": namn, "Status": status, "Kommentar": kommentar.strip()})
 
             if len(ej_placerade) < best_unplaced:
                 best_unplaced = len(ej_placerade)
@@ -223,18 +199,122 @@ if system_file and form_file:
         df = pd.DataFrame(best_result)
 
         # =========================
-        # EXCEL (enkelt – du kan koppla tillbaka din styling här)
+        # KOMPAKT DATA
+        # =========================
+        skol_data = {}
+
+        for _, row in df.iterrows():
+            sk = row["Skola"]
+
+            if sk not in skol_data:
+                if program == "LGFRI":
+                    skol_data[sk] = {"År 1": [], "År 2": [], "År 3": []}
+                else:
+                    skol_data[sk] = {"År 1": [], "År 2": [], "År 3": [], "År 4": []}
+
+            for col in skol_data[sk]:
+                if col in row and row[col] != "":
+                    skol_data[sk][col].append(row[col])
+
+        def region_order(s):
+            r = region_map.get(s,"")
+            if r == "Kalmarregion": return 1
+            if r == "Oskarshamn": return 2
+            if r == "Karlskrona": return 3
+            return 0
+
+        sorted_skolor = sorted(skol_data.keys(), key=lambda x: (region_order(x), x))
+
+        # =========================
+        # EXCEL
         # =========================
         wb = Workbook()
         ws = wb.active
-        ws.title = "Placering"
 
-        ws.append(list(df.columns))
+        ws.column_dimensions["A"].width = 40
+        for c in ["B","C","D","E"]:
+            ws.column_dimensions[c].width = 30
 
-        for _, row in df.iterrows():
-            ws.append(list(row))
+        fill_green = PatternFill(start_color="CCFFCC", fill_type="solid")
+        fill_dark = PatternFill(start_color="99CC66", fill_type="solid")
+        fill_header = PatternFill(start_color="DDDDDD", fill_type="solid")
 
-        # RAPPORT
+        thin = Side(style="thin")
+        thick = Side(style="medium")
+
+        align = Alignment(vertical="center", horizontal="left", wrap_text=True)
+
+        # header
+        if program == "LGFRI":
+            ws.append(["Skola","År 1","År 2","År 3"])
+        else:
+            ws.append(["Skola","År 1","År 2","År 3","År 4"])
+
+        current_region = None
+
+        for skola in sorted_skolor:
+
+            region = region_map.get(skola,"")
+
+            if region != current_region:
+                ws.append([region.upper(),"","","",""])
+                current_region = region
+
+            data = skol_data[skola]
+            kap = kap_map.get(skola,"-")
+            antal = len(set(sum(data.values(), [])))
+
+            start_row = ws.max_row + 1
+            ws.append([f"{skola} ({antal}/{kap})","","","",""])
+
+            for col in range(1,6):
+                cell = ws.cell(row=start_row, column=col)
+                cell.font = Font(bold=True)
+                cell.fill = fill_header
+
+            ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=5)
+
+            max_len = max(len(v) for v in data.values())
+
+            cols = list(data.keys())
+
+            for i in range(max_len):
+                row_vals = [""]
+
+                for c in cols:
+                    row_vals.append(data[c][i] if i < len(data[c]) else "")
+
+                ws.append(row_vals)
+                r = ws.max_row
+
+                for col_i in range(2, len(cols)+2):
+                    ws.cell(row=r, column=col_i).alignment = align
+
+                if program != "LGFRI":
+                    ws.cell(row=r, column=3).fill = fill_green
+                    ws.cell(row=r, column=4).fill = fill_green
+                    ws.cell(row=r, column=5).fill = fill_dark
+
+                for col_i in range(1, len(cols)+2):
+                    ws.cell(row=r, column=col_i).border = Border(
+                        left=thin, right=thin, top=thin, bottom=thin
+                    )
+
+            end_row = ws.max_row
+
+            for rr in range(start_row, end_row + 1):
+                for cc in range(1, len(cols)+2):
+                    ws.cell(row=rr, column=cc).border = Border(
+                        left=thick if cc == 1 else thin,
+                        right=thick if cc == len(cols)+1 else thin,
+                        top=thick if rr == start_row else thin,
+                        bottom=thick if rr == end_row else thin
+                    )
+
+            ws.append(["","","","",""])
+            ws.append(["","","","",""])
+
+        # rapport
         ws_log = wb.create_sheet("Rapport")
         ws_log.append(["Student", "Status", "Kommentar"])
 
