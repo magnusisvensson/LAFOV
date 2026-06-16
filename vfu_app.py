@@ -30,36 +30,15 @@ def school_region(partner, skola):
         return "Karlskrona"
     return "Kalmar"
 
-def school_sort_key(skola):
-    region = skolor.loc[
-        skolor["Skolenhet"] == skola, "Region"
-    ].values[0]
-
-    order = {"Kalmar":0, "Oskarshamn":1, "Karlskrona":2}
-    return (order.get(region,3), skola)
-
-# ===== GEO =====
-geo = {
-    "Kalmar": (56.66,16.36),
-    "Oskarshamn": (57.26,16.45),
-    "Karlskrona": (56.16,15.59)
-}
-
-def dist(a,b):
-    if a not in geo or b not in geo:
-        return 0
-    d=((geo[a][0]-geo[b][0])**2+(geo[a][1]-geo[b][1])**2)**0.5
-    return round(d*111,1)
-
-# ===== MAIN =====
+# ===== DATA =====
 if system_file and form_file:
 
     skolor = pd.read_excel(system_file)
     skolor.columns = skolor.columns.str.strip()
 
     skolor = skolor[
-        (skolor["Kull"]==kull) &
-        (skolor["Inriktning"].str.upper()==program)
+        (skolor["Kull"] == kull) &
+        (skolor["Inriktning"].str.upper() == program)
     ].copy()
 
     skolor["Region"] = skolor.apply(
@@ -72,11 +51,11 @@ if system_file and form_file:
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
 
-    fn=[c for c in students.columns if "förnamn" in c.lower()][0]
-    ln=[c for c in students.columns if "efternamn" in c.lower()][0]
-    bost=[c for c in students.columns if "bostadsort" in c.lower()][0]
+    fn = [c for c in students.columns if "förnamn" in c.lower()][0]
+    ln = [c for c in students.columns if "efternamn" in c.lower()][0]
+    bost = [c for c in students.columns if "bostadsort" in c.lower()][0]
 
-    students["Namn"] = students[fn]+" "+students[ln]
+    students["Namn"] = students[fn] + " " + students[ln]
     students["Region"] = students[bost].apply(get_region)
 
     cap_used = {}
@@ -84,32 +63,30 @@ if system_file and form_file:
     logg = {}
     placed_students = set()
 
+    # ===== HELP =====
     def has_space(skola,år,n):
         return cap_used.get((skola,år),0)+n <= kap.get(skola,999)
 
     def use(skola,år,n):
         cap_used[(skola,år)] = cap_used.get((skola,år),0)+n
 
-    def add(skola,student,col):
+    def add(skola, student, col):
         skol_data.setdefault(skola,{})
         if student not in skol_data[skola]:
             skol_data[skola][student] = {
                 "År1":"","År2":"","År3":"","År4":""
             }
 
-        if skol_data[skola][student][col] == "":
-            skol_data[skola][student][col] = student
+        skol_data[skola][student][col] = student
 
     # ===== ROTATION =====
     def find_rotation(lista, region, n):
 
         for i in range(len(lista)-2):
-
             A = lista[i]
             B = lista[i+1]
             C = lista[i+2]
 
-            # specialregion
             if region in ["Oskarshamn","Karlskrona"]:
 
                 if all([
@@ -121,6 +98,7 @@ if system_file and form_file:
                     return ("ABAB",A,B,C)
 
             else:
+
                 if all([
                     has_space(A,1,n),
                     has_space(B,2,n),
@@ -165,18 +143,24 @@ if system_file and form_file:
                     add(C,s,"År4")
 
                 placed_students.add(s)
-                logg[s]={"Status":"OK","Dist":dist(region,"Kalmar")}
+                logg[s] = {"Status":"OK"}
 
             if typ == "ABAB":
-                use(A,1,n); use(B,2,n); use(A,3,n); use(B,4,n)
+                use(A,1,len(names))
+                use(B,2,len(names))
+                use(A,3,len(names))
+                use(B,4,len(names))
             else:
-                use(A,1,n); use(B,2,n); use(B,3,n); use(C,4,n)
+                use(A,1,len(names))
+                use(B,2,len(names))
+                use(B,3,len(names))
+                use(C,4,len(names))
 
             return True
 
         return False
 
-    # ===== DYNAMISKA GRUPPER =====
+    # ===== GRUPPER =====
     stud_list = students.to_dict("records")
 
     i = 0
@@ -198,70 +182,55 @@ if system_file and form_file:
         if not placed:
             namn = stud_list[i]["Namn"]
             if namn not in placed_students:
-                logg[namn]={"Status":"Får ej plats","Dist":0}
+                logg[namn] = {"Status":"Får ej plats"}
             i += 1
+
+    # ===== STUDENTVY (FIXEN) =====
+    student_rows = []
+
+    for student in students["Namn"]:
+
+        row = {
+            "Student": student,
+            "År1": "",
+            "År2": "",
+            "År3": "",
+            "År4": ""
+        }
+
+        for skola in skol_data:
+            if student in skol_data[skola]:
+
+                data = skol_data[skola][student]
+
+                if data["År1"]:
+                    row["År1"] = skola
+                if data["År2"]:
+                    row["År2"] = skola
+                if data["År3"]:
+                    row["År3"] = skola
+                if data["År4"]:
+                    row["År4"] = skola
+
+        student_rows.append(row)
 
     # ===== EXCEL =====
     wb = Workbook()
+
     ws = wb.active
+    ws.title = "Studentöversikt"
 
-    ws.column_dimensions["A"].width = 40
-    for c in ["B","C","D","E"]:
-        ws.column_dimensions[c].width = 25
+    ws.append(["Student","År1","År2","År3","År4"])
 
-    fill_header = PatternFill(start_color="DDDDDD", fill_type="solid")
-    fill_yellow = PatternFill(start_color="FFE699", fill_type="solid")
-    fill_red = PatternFill(start_color="FF9999", fill_type="solid")
+    for r in student_rows:
+        ws.append([r["Student"], r["År1"], r["År2"], r["År3"], r["År4"]])
 
-    ws.append(["Skola","År1","År2","År3","År4"])
-
-    for skola in sorted(skol_data, key=school_sort_key):
-
-        max_platser = int(kap.get(skola,0))
-
-        ws.append([f"{skola} (max {max_platser})"])
-        r = ws.max_row
-
-        for c in range(1,6):
-            ws.cell(r,c).fill = fill_header
-            ws.cell(r,c).font = Font(bold=True)
-
-        ws.merge_cells(start_row=r,start_column=1,end_row=r,end_column=5)
-
-        rows = [{"År1":"","År2":"","År3":"","År4":""}
-                for _ in range(max_platser)]
-
-        idx = 0
-        for student,data in skol_data[skola].items():
-            if idx >= max_platser:
-                break
-            rows[idx] = data
-            idx += 1
-
-        for rdata in rows:
-            ws.append(["",rdata["År1"],rdata["År2"],rdata["År3"],rdata["År4"]])
-
-            rr = ws.max_row
-
-            for c in range(2,6):
-                namn = ws.cell(rr,c).value
-
-                if namn in logg:
-                    km = logg[namn]["Dist"]
-
-                    if km >= 50:
-                        ws.cell(rr,c).fill = fill_red
-                    elif km >= 30:
-                        ws.cell(rr,c).fill = fill_yellow
-
-        ws.append([])
-
-    # ===== RAPPORT =====
+    # ----- Rapport -----
     ws2 = wb.create_sheet("Rapport")
     ws2.append(["Student","Status"])
 
-    for s,v in logg.items():
-        ws2.append([s,v["Status"]])
+    for s in logg:
+        ws2.append([s, logg[s]["Status"]])
 
     file = "kull_resultat.xlsx"
     wb.save(file)
