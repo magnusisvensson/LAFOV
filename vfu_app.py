@@ -1,5 +1,4 @@
-import streamlit as st
-import pandas as pd
+import streamlit as stimport streamimport pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font
 
@@ -19,8 +18,8 @@ def get_region(text):
     return "Kalmar"
 
 def school_region(partner, skola):
-    s = str(skola).lower()
     p = str(partner).lower()
+    s = str(skola).lower()
 
     if "ljungnäs" in s or "blomstermåla" in s:
         return "Kalmar"
@@ -30,7 +29,7 @@ def school_region(partner, skola):
         return "Karlskrona"
     return "Kalmar"
 
-# ===== GEO (enkel) =====
+# ===== GEO =====
 geo = {
     "Kalmar": (56.66,16.36),
     "Oskarshamn": (57.26,16.45),
@@ -46,7 +45,7 @@ def dist(a,b):
 # ===== MAIN =====
 if system_file and form_file:
 
-    # ----- SKOLOR -----
+    # SKOLOR
     skolor = pd.read_excel(system_file)
     skolor.columns = skolor.columns.str.strip()
 
@@ -61,7 +60,7 @@ if system_file and form_file:
 
     kap = dict(zip(skolor["Skolenhet"], skolor["Antal platser"]))
 
-    # ----- STUDENTER -----
+    # STUDENTER
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
 
@@ -76,7 +75,6 @@ if system_file and form_file:
     skol_data = {}
     logg = {}
 
-    # ===== HELP =====
     def has_space(skola,år,n):
         return cap_used.get((skola,år),0)+n <= kap.get(skola,999)
 
@@ -89,7 +87,22 @@ if system_file and form_file:
             {"År1":"","År2":"","År3":"","År4":""})
         skol_data[skola][student][col]=student
 
-    # ===== PLACERING =====
+    # ===== FULL PLACERING KRAV =====
+    def find_full_rotation(skol_lista, n):
+
+        for i in range(len(skol_lista)-2):
+            A,B,C = skol_lista[i], skol_lista[i+1], skol_lista[i+2]
+
+            if all([
+                has_space(A,1,n),
+                has_space(B,2,n),
+                has_space(B,3,n),
+                has_space(C,4,n)
+            ]):
+                return (A,B,C)
+
+        return None
+
     def place(group):
 
         region = group[0]["Region"]
@@ -101,47 +114,28 @@ if system_file and form_file:
 
         möjliga = regional + [s for s in alla if s not in regional]
 
-        # 1. full rotation
-        for i in range(len(möjliga)-2):
-            A,B,C = möjliga[i],möjliga[i+1],möjliga[i+2]
+        val = find_full_rotation(möjliga, n)
 
-            if all([
-                has_space(A,1,n),
-                has_space(B,2,n),
-                has_space(B,3,n),
-                has_space(C,4,n)
-            ]):
+        if val:
 
-                for s in names:
-                    add(A,s,"År1")
-                    add(B,s,"År2")
-                    add(B,s,"År3")
-                    add(C,s,"År4")
+            A,B,C = val
 
-                use(A,1,n); use(B,2,n); use(B,3,n); use(C,4,n)
+            for s in names:
+                add(A,s,"År1")
+                add(B,s,"År2")
+                add(B,s,"År3")
+                add(C,s,"År4")
 
-                for s in names:
-                    logg[s]={"Status":"OK","Dist":dist(region,"Kalmar")}
+            use(A,1,n); use(B,2,n); use(B,3,n); use(C,4,n)
 
-                return True
+            for s in names:
+                logg[s]={"Status":"OK","Dist":dist(region,"Kalmar")}
 
-        # 2. fallback – en plats per år
-        for skola in möjliga:
-            for år,col in [(1,"År1"),(2,"År2"),(3,"År3"),(4,"År4")]:
-                if has_space(skola,år,n):
-
-                    for s in names:
-                        add(skola,s,col)
-
-                    use(skola,år,n)
-
-                    for s in names:
-                        logg[s]={"Status":"OK","Dist":dist(region,"Kalmar")}
-
-                    return True
+            return True
 
         return False
 
+    # ===== LOOP =====
     stud_list = students.to_dict("records")
     i = 0
 
@@ -184,7 +178,6 @@ if system_file and form_file:
 
         ws.merge_cells(start_row=r,start_column=1,end_row=r,end_column=5)
 
-        # ✅ FIXAD RADLOGIK
         rows = [{"År1":"","År2":"","År3":"","År4":""}
                 for _ in range(max_platser)]
 
@@ -220,7 +213,7 @@ if system_file and form_file:
 
         ws.append([])
 
-    # ----- RAPPORT -----
+    # RAPPORT
     ws2 = wb.create_sheet("Rapport")
     ws2.append(["Student","Status"])
 
