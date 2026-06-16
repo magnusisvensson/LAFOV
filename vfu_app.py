@@ -1,21 +1,26 @@
-import streamlit as stimport streamlit as as pd
+import streamlit as st
+import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font
 
 st.title("VFU-system – Placering")
 
-system_file = st.file_uploader("1. Ladda översiktsfil", type=["xlsx"])
-form_file = st.file_uploader("2. Ladda formulärsvar", type=["xlsx"])
+system_file = st.file_uploader("1. Översiktsfil", type=["xlsx"])
+form_file = st.file_uploader("2. Formulärsvar", type=["xlsx"])
 
 kull = st.number_input("Kull", value=26)
 program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
 
+
 # ===== REGION =====
 def get_region(text):
     t = str(text).lower()
-    if "oskarshamn" in t: return "Oskarshamn"
-    if "karlskrona" in t or "ronneby" in t: return "Karlskrona"
+    if "oskarshamn" in t:
+        return "Oskarshamn"
+    if "karlskrona" in t or "ronneby" in t:
+        return "Karlskrona"
     return "Kalmar"
+
 
 def school_region(partner, skola):
     p = str(partner).lower()
@@ -23,11 +28,14 @@ def school_region(partner, skola):
 
     if "ljungnäs" in s or "blomstermåla" in s:
         return "Kalmar"
+
     if "oskarshamn" in p:
         return "Oskarshamn"
     if "karlskrona" in p or "ronneby" in p:
         return "Karlskrona"
+
     return "Kalmar"
+
 
 # ===== MAIN =====
 if system_file and form_file:
@@ -36,12 +44,13 @@ if system_file and form_file:
     skolor.columns = skolor.columns.str.strip()
 
     skolor = skolor[
-        (skolor["Kull"]==kull) &
-        (skolor["Inriktning"].str.upper()==program)
+        (skolor["Kull"] == kull) &
+        (skolor["Inriktning"].str.upper() == program)
     ].copy()
 
     skolor["Region"] = skolor.apply(
-        lambda r: school_region(r["Partnerområde"], r["Skolenhet"]), axis=1
+        lambda r: school_region(r["Partnerområde"], r["Skolenhet"]),
+        axis=1
     )
 
     kap = dict(zip(skolor["Skolenhet"], skolor["Antal platser"]))
@@ -49,65 +58,74 @@ if system_file and form_file:
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
 
-    fn=[c for c in students.columns if "förnamn" in c.lower()][0]
-    ln=[c for c in students.columns if "efternamn" in c.lower()][0]
-    bost=[c for c in students.columns if "bostadsort" in c.lower()][0]
+    fn = [c for c in students.columns if "förnamn" in c.lower()][0]
+    ln = [c for c in students.columns if "efternamn" in c.lower()][0]
+    bost = [c for c in students.columns if "bostadsort" in c.lower()][0]
 
-    students["Namn"] = students[fn]+" "+students[ln]
+    students["Namn"] = students[fn] + " " + students[ln]
     students["Region"] = students[bost].apply(get_region)
 
     cap_used = {}
     skol_data = {}
-    logg = {}
     placed = set()
+    logg = {}
 
-    def has_space(s,year):
-        return cap_used.get((s,year),0) < kap.get(s,999)
+    # ===== HELP =====
+    def has_space(s, y):
+        return cap_used.get((s, y), 0) < kap.get(s, 999)
 
-    def use(s,year):
-        cap_used[(s,year)] = cap_used.get((s,year),0)+1
+    def use(s, y):
+        cap_used[(s, y)] = cap_used.get((s, y), 0) + 1
 
-    def add(s,student,year):
-        skol_data.setdefault(s,{})
-        skol_data[s].setdefault(student,{
-            "År1":"","År2":"","År3":"","År4":""
-        })
-        skol_data[s][student][year]=student
+    def add(s, student, col):
+        skol_data.setdefault(s, {})
+        if student not in skol_data[s]:
+            skol_data[s][student] = {
+                "År1": "", "År2": "", "År3": "", "År4": ""
+            }
+        skol_data[s][student][col] = student
 
-    # ===== PLACERA EN STUDENT =====
-    def place_one(student):
+    # ===== PLACERA EN STUDENT (viktig!) =====
+    def place_one(stud):
 
-        if student["Namn"] in placed:
+        namn = stud["Namn"]
+
+        if namn in placed:
             return False
 
-        region = student["Region"]
+        region = stud["Region"]
 
-        regional = skolor[skolor["Region"]==region]["Skolenhet"].tolist()
+        regional = skolor[skolor["Region"] == region]["Skolenhet"].tolist()
         alla = list(skolor["Skolenhet"])
+
         lista = regional + [x for x in alla if x not in regional]
 
-        for i in range(len(lista)-2):
+        for i in range(len(lista) - 2):
+            A, B, C = lista[i], lista[i+1], lista[i+2]
 
-            A,B,C = lista[i],lista[i+1],lista[i+2]
-
-            # specialregion
+            # SPECIALREGION
             if region in ["Oskarshamn","Karlskrona"]:
+
                 if all([
                     has_space(A,1),
                     has_space(B,2),
                     has_space(A,3),
                     has_space(B,4)
                 ]):
-                    add(A,student["Namn"],"År1")
-                    add(B,student["Namn"],"År2")
-                    add(A,student["Namn"],"År3")
-                    add(B,student["Namn"],"År4")
+
+                    add(A, namn, "År1")
+                    add(B, namn, "År2")
+                    add(A, namn, "År3")
+                    add(B, namn, "År4")
 
                     use(A,1); use(B,2); use(A,3); use(B,4)
-                    placed.add(student["Namn"])
-                    logg[student["Namn"]]={"Status":"OK"}
+
+                    placed.add(namn)
+                    logg[namn] = {"Status":"OK"}
+
                     return True
 
+            # STANDARD
             else:
                 if all([
                     has_space(A,1),
@@ -115,45 +133,65 @@ if system_file and form_file:
                     has_space(B,3),
                     has_space(C,4)
                 ]):
-                    add(A,student["Namn"],"År1")
-                    add(B,student["Namn"],"År2")
-                    add(B,student["Namn"],"År3")
-                    add(C,student["Namn"],"År4")
+
+                    add(A, namn, "År1")
+                    add(B, namn, "År2")
+                    add(B, namn, "År3")
+                    add(C, namn, "År4")
 
                     use(A,1); use(B,2); use(B,3); use(C,4)
-                    placed.add(student["Namn"])
-                    logg[student["Namn"]]={"Status":"OK"}
+
+                    placed.add(namn)
+                    logg[namn] = {"Status":"OK"}
+
                     return True
 
         return False
 
+
     # ===== STRATEGI =====
     stud_list = students.to_dict("records")
 
-    # först försök grupper
+    # 1. försök grupper
     i = 0
     while i < len(stud_list):
 
-        group = stud_list[i:i+3]
+        group3 = stud_list[i:i+3]
 
-        if len(group)==3 and all(s["Namn"] not in placed for s in group):
-            if all(place_one(s) for s in group):
+        if len(group3) == 3 and all(s["Namn"] not in placed for s in group3):
+            if all(place_one(s) for s in group3):
                 i += 3
                 continue
 
-        group = stud_list[i:i+2]
+        group2 = stud_list[i:i+2]
 
-        if len(group)==2 and all(s["Namn"] not in placed for s in group):
-            if all(place_one(s) for s in group):
+        if len(group2) == 2 and all(s["Namn"] not in placed for s in group2):
+            if all(place_one(s) for s in group2):
                 i += 2
                 continue
 
-        # fallback individ (VIKTIGASTE!)
+        # 2. fallback individ (viktigaste delen)
         if place_one(stud_list[i]):
             i += 1
         else:
-            logg[stud_list[i]["Namn"]]={"Status":"Får ej plats"}
+            logg[stud_list[i]["Namn"]] = {"Status":"Får ej plats"}
             i += 1
+
+
+    # ===== EXTRA KONTROLL =====
+    # säkerställer att ingen saknar år
+    for s in placed:
+        years = []
+        for sk in skol_data:
+            if s in skol_data[sk]:
+                data = skol_data[sk][s]
+                for y in ["År1","År2","År3","År4"]:
+                    if data[y]:
+                        years.append(y)
+
+        if len(years) != 4:
+            st.warning(f"{s} saknar år ({len(years)}/4)")
+
 
     # ===== EXCEL =====
     wb = Workbook()
@@ -165,7 +203,7 @@ if system_file and form_file:
 
         ws.append([skola])
 
-        for student,data in skol_data[skola].items():
+        for student, data in skol_data[skola].items():
             ws.append([
                 "",
                 data["År1"],
@@ -179,13 +217,13 @@ if system_file and form_file:
     ws2 = wb.create_sheet("Rapport")
     ws2.append(["Student","Status"])
 
-    for s,v in logg.items():
-        ws2.append([s,v["Status"]])
+    for s, v in logg.items():
+        ws2.append([s, v["Status"]])
 
-    file="kull_resultat.xlsx"
+    file = "kull_resultat.xlsx"
     wb.save(file)
 
-    with open(file,"rb") as f:
+    with open(file, "rb") as f:
         st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
 
 else:
