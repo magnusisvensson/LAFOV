@@ -1,4 +1,40 @@
-import streamlit as stimport streamlit as stOLOR -----
+import streamlit as st
+import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import PatternFill, Font
+
+st.title("VFU – Placering (stabil version)")
+
+system_file = st.file_uploader("1. Översiktsfil", type=["xlsx"])
+form_file = st.file_uploader("2. Formulärsvar", type=["xlsx"])
+
+kull = st.number_input("Kull", value=26)
+program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
+
+
+# ===== REGION =====
+def get_region(text):
+    t = str(text).lower()
+    if "oskarshamn" in t:
+        return "Oskarshamn"
+    if "karlskrona" in t or "ronneby" in t:
+        return "Karlskrona"
+    return "Kalmar"
+
+
+def school_region(partner):
+    p = str(partner).lower()
+    if "oskarshamn" in p:
+        return "Oskarshamn"
+    if "karlskrona" in p or "ronneby" in p:
+        return "Karlskrona"
+    return "Kalmar"
+
+
+# ===== MAIN =====
+if system_file and form_file:
+
+    # ----- SKOLOR -----
     skolor = pd.read_excel(system_file)
     skolor.columns = skolor.columns.str.strip()
 
@@ -7,12 +43,9 @@ import streamlit as stimport streamlit as stOLOR -----
         (skolor["Inriktning"].str.upper() == program)
     ].copy()
 
-    skolor["Region"] = skolor.apply(
-        lambda r: school_region(r["Partnerområde"], r["Skolenhet"]),
-        axis=1
-    )
+    skolor["Region"] = skolor["Partnerområde"].apply(school_region)
 
-    # ✅ robust kapacitet (fixar ditt fel)
+    # ✅ säker kapacitet (fixar crash)
     kap = {}
     for _, r in skolor.iterrows():
         try:
@@ -31,85 +64,100 @@ import streamlit as stimport streamlit as stOLOR -----
     students["Namn"] = students[fn] + " " + students[ln]
     students["Region"] = students[bost].apply(get_region)
 
-    cap_used = {}
     skol_data = {}
+    cap_used = {}
     logg = {}
 
     # ===== HELP =====
-    def has_space(s, year):
-        return cap_used.get((s, year), 0) < kap.get(s, 0)
+    def has_space(skola, år):
+        return cap_used.get((skola, år), 0) < kap.get(skola, 0)
 
-    def use(s, year):
-        cap_used[(s, year)] = cap_used.get((s, year), 0) + 1
+    def use(skola, år):
+        cap_used[(skola, år)] = cap_used.get((skola, år), 0) + 1
 
-    def add(s, student, col):
-        skol_data.setdefault(s, {})
-        if student not in skol_data[s]:
-            skol_data[s][student] = {"År1":"","År2":"","År3":"","År4":""}
-        skol_data[s][student][col] = student
+    def add(skola, student, år):
+        skol_data.setdefault(skola, {})
+        if student not in skol_data[skola]:
+            skol_data[skola][student] = {
+                "År1": "", "År2": "", "År3": "", "År4": ""
+            }
+        skol_data[skola][student][år] = student
 
-    # ===== PLACERA EN STUDENT =====
-    def place_student(stud):
 
-        namn = stud["Namn"]
-        region = stud["Region"]
+    # ===== PLACERING =====
+    def place_student(student):
 
-        lista = list(skolor["Skolenhet"])
+        namn = student["Namn"]
+        region = student["Region"]
 
-        # ===== 1. PERFEKT ROTATION =====
-        for i in range(len(lista)-2):
+        skol_lista = list(skolor["Skolenhet"])
 
-            A, B, C = lista[i], lista[i+1], lista[i+2]
+        # ------ 1. PERFEKT ROTATION ------
+        for i in range(len(skol_lista) - 2):
 
-            # special
-            if region in ["Oskarshamn","Karlskrona"]:
+            A, B, C = skol_lista[i], skol_lista[i+1], skol_lista[i+2]
+
+            if region in ["Oskarshamn", "Karlskrona"]:
+
                 if all([
                     has_space(A,1),
                     has_space(B,2),
                     has_space(A,3),
                     has_space(B,4)
                 ]):
+
                     add(A,namn,"År1")
                     add(B,namn,"År2")
                     add(A,namn,"År3")
                     add(B,namn,"År4")
 
                     use(A,1); use(B,2); use(A,3); use(B,4)
-                    logg[namn]={"Status":"OK"}
+
+                    logg[namn] = {"Status":"OK"}
                     return
 
-            # standard
             else:
+
                 if all([
                     has_space(A,1),
                     has_space(B,2),
                     has_space(B,3),
                     has_space(C,4)
                 ]):
+
                     add(A,namn,"År1")
                     add(B,namn,"År2")
                     add(B,namn,"År3")
                     add(C,namn,"År4")
 
                     use(A,1); use(B,2); use(B,3); use(C,4)
-                    logg[namn]={"Status":"OK"}
+
+                    logg[namn] = {"Status":"OK"}
                     return
 
-        # ===== 2. FALLBACK – FYLL ALLA ÅR =====
-        år_ordning = [("År1",1),("År2",2),("År3",3),("År4",4)]
+        # ------ 2. FALLBACK (FYLL ALLTID) ------
+        år_lista = [("År1",1),("År2",2),("År3",3),("År4",4)]
 
-        for col, y in år_ordning:
-            for s in lista:
-                if has_space(s, y):
-                    add(s, namn, col)
-                    use(s, y)
+        for årnamn, årnr in år_lista:
+            placerad = False
+            for skola in skol_lista:
+                if has_space(skola, årnr):
+                    add(skola, namn, årnamn)
+                    use(skola, årnr)
+                    placerad = True
                     break
 
-        logg[namn]={"Status":"OK*"}
+            if not placerad:
+                logg[namn] = {"Status":"Får ej plats"}
+                return
+
+        logg[namn] = {"Status":"OK*"}  # fallback
+
 
     # ===== KÖR ALLA =====
     for stud in students.to_dict("records"):
         place_student(stud)
+
 
     # ===== EXCEL =====
     wb = Workbook()
@@ -144,59 +192,31 @@ import streamlit as stimport streamlit as stOLOR -----
             rows[idx] = data
             idx += 1
 
-        for row in rows:
-            ws.append(["", row["År1"], row["År2"], row["År3"], row["År4"]])
+        for rad in rows:
+            ws.append([
+                "",
+                rad["År1"],
+                rad["År2"],
+                rad["År3"],
+                rad["År4"]
+            ])
 
         ws.append([])
 
-    # ----- RAPPORT -----
+
+    # ---- RAPPORT ----
     ws2 = wb.create_sheet("Rapport")
     ws2.append(["Student","Status"])
 
-    for s,v in logg.items():
-        ws2.append([s,v["Status"]])
+    for s, v in logg.items():
+        ws2.append([s, v["Status"]])
+
 
     file = "kull_resultat.xlsx"
     wb.save(file)
 
-    with open(file,"rb") as f:
+    with open(file, "rb") as f:
         st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
 
 else:
     st.info("Ladda upp båda filer")
-import pandas as pd
-from openpyxl import Workbook
-from openpyxl.styles import PatternFill, Font
-
-st.title("VFU – Placering (stabil version)")
-
-system_file = st.file_uploader("1. Översiktsfil", type=["xlsx"])
-form_file = st.file_uploader("2. Formulärsvar", type=["xlsx"])
-
-kull = st.number_input("Kull", value=26)
-program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
-
-# ===== REGION =====
-def get_region(text):
-    t = str(text).lower()
-    if "oskarshamn" in t:
-        return "Oskarshamn"
-    if "karlskrona" in t or "ronneby" in t:
-        return "Karlskrona"
-    return "Kalmar"
-
-def school_region(partner, skola):
-    s = str(skola).lower()
-    p = str(partner).lower()
-
-    if "ljungnäs" in s or "blomstermåla" in s:
-        return "Kalmar"
-    if "oskarshamn" in p:
-        return "Oskarshamn"
-    if "karlskrona" in p or "ronneby" in p:
-        return "Karlskrona"
-    return "Kalmar"
-
-# ===== MAIN =====
-if system_file and form_file:
-
