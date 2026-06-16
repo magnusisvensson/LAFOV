@@ -12,7 +12,15 @@ form_file = st.file_uploader("2. Ladda formulärsvar", type=["xlsx"])
 kull = st.number_input("Kull", value=26)
 program = st.selectbox("Välj inriktning", ["LAFOV", "LAGRV", "LGFRI"])
 
-# ===== FUNKTIONER =====
+# ========= GEO =========
+geo = {
+    "Kalmar": (56.66, 16.36),
+    "Oskarshamn": (57.26, 16.45),
+    "Karlskrona": (56.16, 15.59),
+    "Ronneby": (56.21, 15.28),
+    "Nybro": (56.74, 15.91)
+}
+
 def get_region(text):
     text = str(text)
     if any(x in text for x in ["Kalmar","Nybro","Mönsterås"]):
@@ -23,8 +31,38 @@ def get_region(text):
         return "Karlskrona"
     return "Kalmarregion"
 
-def clean_text(text):
-    return str(text).lower().replace(" ","").replace("-","")
+def normalize_location(text):
+    t = str(text).lower()
+    mapping = {
+        "kallinge": "Ronneby",
+        "lindsdal": "Kalmar",
+        "rinkabyholm": "Kalmar",
+        "färjestaden": "Kalmar",
+        "nybro": "Kalmar",
+        "emmaboda": "Kalmar",
+        "mönsterås": "Kalmar"
+    }
+    for k in mapping:
+        if k in t:
+            return mapping[k]
+
+    if "påskallavik" in t:
+        return "Oskarshamn"
+
+    return text
+
+def distance(a,b):
+    a = normalize_location(a)
+    b = normalize_location(b)
+    if a not in geo or b not in geo:
+        return 999
+    return ((geo[a][0]-geo[b][0])**2 + (geo[a][1]-geo[b][1])**2)**0.5
+
+def distance_km(a,b):
+    return round(distance(a,b)*111,1)
+
+def clean_text(t):
+    return str(t).lower().replace(" ","").replace("-","")
 
 def match_school(a,s):
     return clean_text(a) in clean_text(s) or clean_text(s) in clean_text(a)
@@ -36,12 +74,12 @@ def find_column(cols,keywords):
     return None
 
 if system_file and form_file:
+
     try:
-        # ===== SKOLOR =====
         skolor_all = pd.read_excel(system_file)
         skolor_all.columns = skolor_all.columns.str.strip()
 
-        # ✅ vakanta skolor (rätt program)
+        # ===== VAKANTA =====
         vakanta = skolor_all[
             (skolor_all["Kull"].astype(str).str.contains("VAKANT", case=False, na=False)) &
             (skolor_all["Inriktning"].str.upper() == program)
@@ -53,7 +91,7 @@ if system_file and form_file:
             if pd.notna(r["Antal platser"]) and r["Antal platser"] > 0
         ]
 
-        # ✅ andra kullar
+        # ===== ANDRA KULLAR =====
         andra_kullar = skolor_all[
             (skolor_all["Inriktning"].str.upper() == program) &
             (skolor_all["Kull"] != kull) &
@@ -66,7 +104,6 @@ if system_file and form_file:
             if pd.notna(r["Antal platser"]) and r["Antal platser"] > 0
         ]
 
-        # ===== filtrera rätt kull =====
         skolor = skolor_all[
             (skolor_all["Kull"] == kull) &
             (skolor_all["Inriktning"].str.upper() == program)
@@ -85,9 +122,20 @@ if system_file and form_file:
         ln = find_column(students.columns,["efternamn"])
         bost = find_column(students.columns,["bostadsort"])
         ank = find_column(students.columns,["anknytning"])
+        alt_bost = find_column(students.columns,["alternativ"])
+        val_ort = find_column(students.columns,["helst"])
 
+        def välj_bostadsort(row):
+            if "alternativ" in str(row.get(val_ort,"")).lower():
+                alt = row.get(alt_bost)
+                if pd.notna(alt):
+                    return alt
+            return row.get(bost)
+
+        students["Aktiv bostadsort"] = students.apply(välj_bostadsort, axis=1)
+        students["Aktiv bostadsort"] = students["Aktiv bostadsort"].apply(normalize_location)
+        students["Region"] = students["Aktiv bostadsort"].apply(get_region)
         students["Namn"] = students[fn] + " " + students[ln]
-        students["Region"] = students[bost].apply(get_region)
 
         best_result, best_log = None, None
         best_unplaced = 999
@@ -97,111 +145,68 @@ if system_file and form_file:
             result, logg, ej_placerade = [], [], []
             cap = {}
 
-            s_run = students.sample(frac=1)
+            for i, (_, student) in enumerate(students.iterrows()):
 
-            for region in s_run["Region"].unique():
+                namn = student["Namn"]
+                ort = student["Aktiv bostadsort"]
+                skol_lista = list(skolor["Skolenhet"])
 
-                stud = s_run[s_run["Region"] == region]
-                skol_lista_full = list(skolor[skolor["Region"]==region]["Skolenhet"])
+                # 🔥 sortera efter avstånd
+                skol_lista = sorted(skol_lista, key=lambda s: distance(ort, s))
 
-                for i,(_, student) in enumerate(stud.iterrows()):
+                A = skol_lista[0]
+                dist = distance_km(ort, A)
 
-                    namn = student["Namn"]
-                    ank_raw = str(student.get(ank,"")).strip()
+                if cap.get((A,1),0) >= kap_map.get(A,999):
+                    ej_placerade.append(namn)
 
-                    if ank_raw.lower() in ["","ingen","-","nej"]:
-                        skol_lista = skol_lista_full
+                    if vakant_info:
+                        tips = "Vakant: " + ", ".join(vakant_info)
+                    elif andra_info:
+                        tips = "Andra kullar: " + ", ".join(andra_info)
                     else:
-                        skol_lista = [s for s in skol_lista_full if not match_school(ank_raw,s)]
-                        if not skol_lista:
-                            skol_lista = skol_lista_full
-
-                    placed = False
-                    status = "OK"
-                    kommentar = ""
-
-                    for shift in range(len(skol_lista)):
-                        A = skol_lista[(i+shift)%len(skol_lista)]
-                        B = skol_lista[(i+1+shift)%len(skol_lista)]
-                        C = skol_lista[(i+2+shift)%len(skol_lista)]
-
-                        if (
-                            cap.get((A,1),0)<kap_map.get(A,999) and
-                            cap.get((B,2),0)<kap_map.get(B,999) and
-                            cap.get((B,3),0)<kap_map.get(B,999) and
-                            cap.get((C,4),0)<kap_map.get(C,999)
-                        ):
-                            placed=True
-                            break
-
-                    if not placed:
-                        ej_placerade.append(namn)
-
-                        if vakant_info:
-                            tips = "Placera på vakant skola: " + ", ".join(vakant_info)
-                        elif andra_info:
-                            tips = "Lediga platser på andra kullar: " + ", ".join(andra_info)
-                        else:
-                            tips = "Övertaligt – fler platser behövs"
-
-                        logg.append({
-                            "Student":namn,
-                            "Status":"Får ej plats",
-                            "Kommentar":"",
-                            "Tips":tips
-                        })
-                        continue
-
-                    cap[(A,1)] = cap.get((A,1),0)+1
-                    cap[(B,2)] = cap.get((B,2),0)+1
-                    cap[(B,3)] = cap.get((B,3),0)+1
-                    cap[(C,4)] = cap.get((C,4),0)+1
-
-                    result += [
-                        {"Skola":A,"År 1":namn,"År 2":"","År 3":"","År 4":""},
-                        {"Skola":B,"År 1":"","År 2":namn,"År 3":namn,"År 4":""},
-                        {"Skola":C,"År 1":"","År 2":"","År 3":"","År 4":namn}
-                    ]
+                        tips = "Övertaligt"
 
                     logg.append({
                         "Student":namn,
-                        "Status":status,
-                        "Kommentar":kommentar,
-                        "Tips":""
+                        "Status":"Får ej plats",
+                        "Kommentar":"",
+                        "Tips":tips,
+                        "Avstånd":"-"
                     })
+                    continue
 
-            if len(ej_placerade)<best_unplaced:
-                best_unplaced=len(ej_placerade)
-                best_result=result
-                best_log=logg
+                cap[(A,1)] = cap.get((A,1),0)+1
 
-        df = pd.DataFrame(best_result)
+                result.append({"Skola":A,"År 1":namn,"År 2":"","År 3":"","År 4":""})
+
+                logg.append({
+                    "Student":namn,
+                    "Status":"OK",
+                    "Kommentar":"",
+                    "Tips":"",
+                    "Avstånd":f"{dist} km"
+                })
+
+        df = pd.DataFrame(result)
 
         # ===== LAYOUT =====
-        skol_data={}
-        for _,row in df.iterrows():
-            s=row["Skola"]
-            if s not in skol_data:
-                skol_data[s]={"År 1":[], "År 2":[], "År 3":[], "År 4":[]}
-
-            for c in skol_data[s]:
-                if c in row and row[c]!="":
-                    skol_data[s][c].append(row[c])
+        skol_data = {}
+        for _, r in df.iterrows():
+            s = r["Skola"]
+            skol_data.setdefault(s, {"År 1":[],"År 2":[],"År 3":[],"År 4":[]})
+            if r["År 1"]:
+                skol_data[s]["År 1"].append(r["År 1"])
 
         wb = Workbook()
         ws = wb.active
 
         fill_header = PatternFill(start_color="DDDDDD", fill_type="solid")
         fill_red = PatternFill(start_color="FF9999", fill_type="solid")
-        fill_green = PatternFill(start_color="CCFFCC", fill_type="solid")
-        fill_dark = PatternFill(start_color="99CC66", fill_type="solid")
-
-        thin = Side(style="thin")
-        thick = Side(style="medium")
 
         ws.append(["Skola","År 1","År 2","År 3","År 4"])
 
-        for skola in sorted(skol_data.keys()):
+        for skola in sorted(skol_data):
 
             kap = kap_map.get(skola)
 
@@ -212,54 +217,40 @@ if system_file and form_file:
                 rubrik = f"{skola} (max {int(kap)})"
                 color = fill_header
 
-            start = ws.max_row+1
+            row = ws.max_row+1
             ws.append([rubrik])
 
-            for col in range(1,6):
-                ws.cell(start,col).fill=color
-                ws.cell(start,col).font=Font(bold=True)
+            for c in range(1,6):
+                ws.cell(row,c).fill = color
+                ws.cell(row,c).font = Font(bold=True)
 
-            ws.merge_cells(start_row=start, start_column=1, end_row=start, end_column=5)
+            ws.merge_cells(start_row=row,start_column=1,end_row=row,end_column=5)
 
-            data = skol_data[skola]
-            max_len = max(len(v) for v in data.values())
-
-            for i in range(max_len):
-                ws.append([
-                    "",
-                    data["År 1"][i] if i<len(data["År 1"]) else "",
-                    data["År 2"][i] if i<len(data["År 2"]) else "",
-                    data["År 3"][i] if i<len(data["År 3"]) else "",
-                    data["År 4"][i] if i<len(data["År 4"]) else ""
-                ])
-
-                r = ws.max_row
-                ws.cell(r,3).fill = fill_green
-                ws.cell(r,4).fill = fill_green
-                ws.cell(r,5).fill = fill_dark
+            for namn in skol_data[skola]["År 1"]:
+                ws.append(["",namn,"","",""])
 
             ws.append([])
             ws.append([])
 
-        # ===== RAPPORT =====
         ws2 = wb.create_sheet("Rapport")
-        ws2.append(["Student","Status","Kommentar","Tips"])
+        ws2.append(["Student","Status","Kommentar","Tips","Avstånd"])
 
-        for r in best_log:
+        for r in logg:
             ws2.append([
                 r["Student"],
                 r["Status"],
                 r["Kommentar"],
-                r.get("Tips","")
+                r.get("Tips",""),
+                r.get("Avstånd","")
             ])
 
-        file="kull_resultat.xlsx"
+        file = "kull_resultat.xlsx"
         wb.save(file)
 
         with open(file,"rb") as f:
             st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
 
-        st.success(f"✅ Klar – {best_unplaced} ej placerade")
+        st.success(f"✅ Klar – {len(ej_placerade)} ej placerade")
 
     except Exception as e:
         st.error(e)
