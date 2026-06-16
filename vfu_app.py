@@ -20,8 +20,8 @@ def get_region(text):
     return "Kalmar"
 
 def school_region(partner, skola):
-    s = str(skola).lower()
     p = str(partner).lower()
+    s = str(skola).lower()
 
     if "ljungnäs" in s or "blomstermåla" in s:
         return "Kalmar"
@@ -31,7 +31,7 @@ def school_region(partner, skola):
         return "Karlskrona"
     return "Kalmar"
 
-# ===== ENKEL AVSTÅNDSAPPROX =====
+# ===== GEO approx =====
 geo = {
     "Kalmar": (56.66,16.36),
     "Oskarshamn": (57.26,16.45),
@@ -68,7 +68,7 @@ if system_file and form_file:
     ln=[c for c in students.columns if "efternamn" in c.lower()][0]
     bost=[c for c in students.columns if "bostadsort" in c.lower()][0]
 
-    students["Namn"] = students[fn]+" "+students[ln]
+    students["Namn"] = students[fn] + " " + students[ln]
     students["Region"] = students[bost].apply(get_region)
 
     cap_used = {}
@@ -76,7 +76,6 @@ if system_file and form_file:
     logg = {}
     group_id = 0
 
-    # ===== HELP =====
     def has_space(skola,år,n):
         return cap_used.get((skola,år),0)+n <= kap.get(skola,999)
 
@@ -89,12 +88,10 @@ if system_file and form_file:
             "År1":"","År2":"","År3":"","År4":"",
             "Group":group
         })
-        skol_data[skola][student][col]=student
+        skol_data[skola][student][col] = student
 
     # ===== PLACERING =====
-    def place(group):
-
-        nonlocal group_id
+    def place(group, gid):
 
         region = group[0]["Region"]
         names = [s["Namn"] for s in group]
@@ -105,7 +102,7 @@ if system_file and form_file:
 
         möjliga = regional + [s for s in all_schools if s not in regional]
 
-        # FULL rotation
+        # 1. full rotation
         for i in range(len(möjliga)-2):
             A,B,C = möjliga[i],möjliga[i+1],möjliga[i+2]
 
@@ -115,46 +112,50 @@ if system_file and form_file:
                 has_space(B,3,n),
                 has_space(C,4,n)
             ]):
+
                 for s in names:
-                    add(A,s,"År1",group_id)
-                    add(B,s,"År2",group_id)
-                    add(B,s,"År3",group_id)
-                    add(C,s,"År4",group_id)
+                    add(A,s,"År1",gid)
+                    add(B,s,"År2",gid)
+                    add(B,s,"År3",gid)
+                    add(C,s,"År4",gid)
 
                 use(A,1,n); use(B,2,n); use(B,3,n); use(C,4,n)
 
                 for s in names:
-                    logg[s]={"Status":"OK","Dist":max(dist(region,region),0)}
+                    logg[s]={"Status":"OK","Dist":dist(region,"Kalmar")}
 
-                group_id += 1
                 return True
 
-        # MAXFYLL per år
+        # 2. fallback per år
         for skola in möjliga:
             for år,col in [(1,"År1"),(2,"År2"),(3,"År3"),(4,"År4")]:
                 if has_space(skola,år,n):
+
                     for s in names:
-                        add(skola,s,col,group_id)
+                        add(skola,s,col,gid)
+
                     use(skola,år,n)
 
                     for s in names:
-                        logg[s]={"Status":"OK","Dist":dist(region,get_region(s))}
+                        logg[s]={"Status":"OK","Dist":dist(region,"Kalmar")}
 
-                    group_id += 1
                     return True
 
         return False
 
     stud_list = students.to_dict("records")
-    i = 0
 
+    i = 0
     while i < len(stud_list):
 
-        if place(stud_list[i:i+3]):
+        if place(stud_list[i:i+3], group_id):
+            group_id += 1
             i += 3
-        elif place(stud_list[i:i+2]):
+        elif place(stud_list[i:i+2], group_id):
+            group_id += 1
             i += 2
-        elif place([stud_list[i]]):
+        elif place([stud_list[i]], group_id):
+            group_id += 1
             i += 1
         else:
             logg[stud_list[i]["Namn"]]={"Status":"Får ej plats","Dist":0}
@@ -229,3 +230,4 @@ if system_file and form_file:
 
 else:
     st.info("Ladda upp båda filer")
+``
