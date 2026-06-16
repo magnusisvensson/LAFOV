@@ -3,7 +3,7 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font
 
-st.title("VFU – Placering (fungerande version)")
+st.title("VFU – Placering (fungerande och strikt)")
 
 system_file = st.file_uploader("1. Översiktsfil", type=["xlsx"])
 form_file = st.file_uploader("2. Formulärsvar", type=["xlsx"])
@@ -66,7 +66,6 @@ if system_file and form_file:
 
     student_list=students.to_dict("records")
 
-    # ===== FÖRDELNING =====
     cap_used={}
     year_assign={1:{},2:{},4:{}}
 
@@ -76,7 +75,7 @@ if system_file and form_file:
     def use(s,y):
         cap_used[(s,y)] = cap_used.get((s,y),0)+1
 
-    # ✅ Fyll År1, År2, År4 för ALLA studenter
+    # ===== FÖRDELA ÅR1, ÅR2, ÅR4 =====
     for year in [1,2,4]:
 
         for idx, stud in enumerate(student_list):
@@ -85,10 +84,7 @@ if system_file and form_file:
             region=stud["Region"]
             skol_lista=region_schools.get(region,[])
 
-            if namn in year_assign[year]:
-                continue
-
-            start=(idx + year) % len(skol_lista)
+            start=(idx+year) % len(skol_lista)
             ordered=skol_lista[start:]+skol_lista[:start]
 
             for s in ordered:
@@ -97,39 +93,51 @@ if system_file and form_file:
                     use(s,year)
                     break
 
-            # ✅ fallback: garantera plats
-            if namn not in year_assign[year]:
-                for s in skol_lista:
-                    if has_space(s,year):
-                        year_assign[year][namn]=s
-                        use(s,year)
-                        break
+    # ===== VALIDERA STUDENTER =====
+    valid_students=set()
 
-    # ✅ År3 = År2
-    year_assign[3]=year_assign[2]
+    for stud in student_list:
+        namn=stud["Namn"]
+
+        if (
+            namn in year_assign[1] and
+            namn in year_assign[2] and
+            namn in year_assign[4]
+        ):
+            valid_students.add(namn)
+
+    # ✅ År3 = År2 (endast för giltiga)
+    year_assign[3] = {
+        namn: year_assign[2][namn]
+        for namn in valid_students
+    }
 
     # ===== BYGG DATA =====
     school_data={}
+    logg={}
+
     for stud in student_list:
 
         namn=stud["Namn"]
 
+        if namn not in valid_students:
+            logg[namn]="Ej placerad"
+            continue
+
+        logg[namn]="OK"
+
         data={
-            "År1":year_assign[1].get(namn,""),
-            "År2":year_assign[2].get(namn,""),
-            "År3":year_assign[3].get(namn,""),
-            "År4":year_assign[4].get(namn,"")
+            "År1":year_assign[1][namn],
+            "År2":year_assign[2][namn],
+            "År3":year_assign[3][namn],
+            "År4":year_assign[4][namn]
         }
 
         for year,skola in data.items():
-            if skola=="":
-                continue
-
             school_data.setdefault(skola,{})
             school_data[skola].setdefault(namn,{
                 "År1":"","År2":"","År3":"","År4":""
             })
-
             school_data[skola][namn][year]=namn
 
     # ===== EXCEL =====
@@ -175,7 +183,7 @@ if system_file and form_file:
     ws2.append(["Student","Status"])
 
     for s in students["Namn"]:
-        ws2.append([s,"OK"])
+        ws2.append([s,logg.get(s,"Ej placerad")])
 
     file="kull_resultat.xlsx"
     wb.save(file)
