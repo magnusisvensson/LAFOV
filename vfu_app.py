@@ -18,6 +18,20 @@ def get_region(text):
     if "karlskrona" in t or "ronneby" in t: return "Karlskrona"
     return "Kalmar"
 
+def school_region(partner, skola):
+    p = str(partner).lower()
+    s = str(skola).lower()
+
+    # ✅ DIN JUSTERING
+    if "ljungnäs" in s or "blomstermåla" in s:
+        return "Kalmar"
+
+    if "oskarshamn" in p:
+        return "Oskarshamn"
+    if "karlskrona" in p or "ronneby" in p:
+        return "Karlskrona"
+    return "Kalmar"
+
 if system_file is not None and form_file is not None:
 
     skolor = pd.read_excel(system_file)
@@ -27,6 +41,11 @@ if system_file is not None and form_file is not None:
         (skolor["Kull"] == kull) &
         (skolor["Inriktning"].str.upper() == program)
     ].copy()
+
+    skolor["Region"] = skolor.apply(
+        lambda r: school_region(r["Partnerområde"], r["Skolenhet"]),
+        axis=1
+    )
 
     kap = dict(zip(skolor["Skolenhet"], skolor["Antal platser"]))
 
@@ -46,114 +65,91 @@ if system_file is not None and form_file is not None:
 
     def add(skola, student, col):
         skol_data.setdefault(skola,{})
-        skol_data[skola].setdefault(student,{"År1":"","År2":"","År3":"","År4":""})
+        skol_data[skola].setdefault(student,
+            {"År1":"","År2":"","År3":"","År4":""})
         skol_data[skola][student][col]=student
 
-    # ===== FUNKTION SOM FÖRSÖKER PLACERA EN LISTA =====
-    def place_list(student_list):
+    # ===== FLEXIBEL PLACERING =====
+    def place(student_list):
 
         region = student_list[0]["Region"]
-        namn_lista = [s["Namn"] for s in student_list]
+        names = [s["Namn"] for s in student_list]
 
-        möjliga = skolor[
-            skolor["Partnerområde"].str.contains(region, case=False, na=False)
-        ]["Skolenhet"].tolist()
+        regional = skolor[skolor["Region"] == region]["Skolenhet"].tolist()
+        all_schools = list(skolor["Skolenhet"])
 
-        if len(möjliga) < 2:
-            möjliga = list(skolor["Skolenhet"])
+        möjliga = regional + [s for s in all_schools if s not in regional]
 
-        # ===== OSKARSHAMN/KARLSKRONA =====
-        if region in ["Oskarshamn","Karlskrona"]:
+        # ===== 1. FÖRSÖK PERFEKT =====
+        for i in range(len(möjliga)-2):
+            A,B,C = möjliga[i], möjliga[i+1], möjliga[i+2]
 
-            for i in range(len(möjliga)-1):
+            if (
+                cap_used.get((A,1),0)+len(names) <= kap.get(A,999) and
+                cap_used.get((B,2),0)+len(names) <= kap.get(B,999) and
+                cap_used.get((B,3),0)+len(names) <= kap.get(B,999) and
+                cap_used.get((C,4),0)+len(names) <= kap.get(C,999)
+            ):
+                for n in names:
+                    add(A,n,"År1")
+                    add(B,n,"År2")
+                    add(B,n,"År3")
+                    add(C,n,"År4")
 
-                A = möjliga[i]
-                B = möjliga[i+1]
+                cap_used[(A,1)] = cap_used.get((A,1),0)+len(names)
+                cap_used[(B,2)] = cap_used.get((B,2),0)+len(names)
+                cap_used[(B,3)] = cap_used.get((B,3),0)+len(names)
+                cap_used[(C,4)] = cap_used.get((C,4),0)+len(names)
+                return True
 
-                if (
-                    cap_used.get((A,1),0)+len(student_list) <= kap.get(A,999) and
-                    cap_used.get((B,2),0)+len(student_list) <= kap.get(B,999) and
-                    cap_used.get((A,3),0)+len(student_list) <= kap.get(A,999) and
-                    cap_used.get((B,4),0)+len(student_list) <= kap.get(B,999)
-                ):
+        # ===== 2. FÖRSÖK 2 SKOLOR =====
+        for i in range(len(möjliga)-1):
+            A,B = möjliga[i], möjliga[i+1]
 
-                    for namn in namn_lista:
-                        add(A,namn,"År1")
-                        add(B,namn,"År2")
-                        add(A,namn,"År3")
-                        add(B,namn,"År4")
+            if (
+                cap_used.get((A,1),0)+len(names) <= kap.get(A,999) and
+                cap_used.get((B,2),0)+len(names) <= kap.get(B,999)
+            ):
+                for n in names:
+                    add(A,n,"År1")
+                    add(B,n,"År2")
+                    add(A,n,"År3")
+                    add(B,n,"År4")
 
-                    cap_used[(A,1)] = cap_used.get((A,1),0)+len(student_list)
-                    cap_used[(B,2)] = cap_used.get((B,2),0)+len(student_list)
-                    cap_used[(A,3)] = cap_used.get((A,3),0)+len(student_list)
-                    cap_used[(B,4)] = cap_used.get((B,4),0)+len(student_list)
+                cap_used[(A,1)] = cap_used.get((A,1),0)+len(names)
+                cap_used[(B,2)] = cap_used.get((B,2),0)+len(names)
+                return True
 
-                    return True
+        # ===== 3. MAXFYLL =====
+        for skola in möjliga:
+            if cap_used.get((skola,1),0) < kap.get(skola,999):
 
-        # ===== KALMAR =====
-        else:
+                for n in names:
+                    add(skola,n,"År1")
 
-            for i in range(len(möjliga)-2):
-
-                A = möjliga[i]
-                B = möjliga[i+1]
-                C = möjliga[i+2]
-
-                if (
-                    cap_used.get((A,1),0)+len(student_list) <= kap.get(A,999) and
-                    cap_used.get((B,2),0)+len(student_list) <= kap.get(B,999) and
-                    cap_used.get((B,3),0)+len(student_list) <= kap.get(B,999) and
-                    cap_used.get((C,4),0)+len(student_list) <= kap.get(C,999)
-                ):
-
-                    for namn in namn_lista:
-                        add(A,namn,"År1")
-                        add(B,namn,"År2")
-                        add(B,namn,"År3")
-                        add(C,namn,"År4")
-
-                    cap_used[(A,1)] = cap_used.get((A,1),0)+len(student_list)
-                    cap_used[(B,2)] = cap_used.get((B,2),0)+len(student_list)
-                    cap_used[(B,3)] = cap_used.get((B,3),0)+len(student_list)
-                    cap_used[(C,4)] = cap_used.get((C,4),0)+len(student_list)
-
-                    return True
+                cap_used[(skola,1)] = cap_used.get((skola,1),0)+len(names)
+                return True
 
         return False
 
-    # ===== DYNAMISK GRUPPLOGIK =====
-    student_list = students.to_dict("records")
+    # ===== DYNAMISK GRUPP =====
+    stud_list = students.to_dict("records")
 
     i = 0
-    while i < len(student_list):
+    while i < len(stud_list):
 
-        # börja med grupp 3
-        group = student_list[i:i+3]
-
-        if place_list(group):
-            for s in group:
-                logg.append({"Student":s["Namn"],"Status":"OK"})
+        if place(stud_list[i:i+3]):
+            logg += [{"Student":s["Namn"],"Status":"OK"} for s in stud_list[i:i+3]]
             i += 3
-            continue
-
-        # fallback grupp 2
-        group = student_list[i:i+2]
-
-        if place_list(group):
-            for s in group:
-                logg.append({"Student":s["Namn"],"Status":"OK"})
+        elif place(stud_list[i:i+2]):
+            logg += [{"Student":s["Namn"],"Status":"OK"} for s in stud_list[i:i+2]]
             i += 2
-            continue
-
-        # fallback singel
-        group = [student_list[i]]
-
-        if place_list(group):
-            logg.append({"Student":group[0]["Namn"],"Status":"OK"})
+        elif place([stud_list[i]]):
+            logg.append({"Student":stud_list[i]["Namn"],"Status":"OK"})
+            i += 1
         else:
-            logg.append({"Student":group[0]["Namn"],"Status":"Får ej plats"})
-
-        i += 1
+            logg.append({"Student":stud_list[i]["Namn"],"Status":"Får ej plats"})
+            i += 1
 
     # ===== EXCEL =====
     wb = Workbook()
