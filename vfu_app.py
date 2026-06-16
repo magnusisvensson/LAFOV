@@ -12,8 +12,15 @@ form_file = st.file_uploader("2. Formulärsvar", type=["xlsx"])
 kull = st.number_input("Använd skolor planerade för kull:", value=26)
 program = st.selectbox("Inom program:", ["LAFOV","LAGRV","LGFRI"])
 
-
 # ===== REGION =====
+def get_region(text):
+    t = str(text).lower()
+    if "oskarshamn" in t:
+        return "Oskarshamn"
+    if "karlskrona" in t or "ronneby" in t:
+        return "Karlskrona"
+    return "Kalmar"
+
 def school_region(partner):
     p = str(partner).lower()
     if "oskarshamn" in p:
@@ -22,11 +29,10 @@ def school_region(partner):
         return "Karlskrona"
     return "Kalmar"
 
-
 # ===== MAIN =====
 if system_file and form_file:
 
-    # ===== LÄS SKOLOR =====
+    # ===== SKOLOR =====
     skolor = pd.read_excel(system_file)
     skolor.columns = skolor.columns.str.strip()
 
@@ -37,7 +43,6 @@ if system_file and form_file:
 
     skolor["Region"] = skolor["Partnerområde"].apply(school_region)
 
-    # Kapacitet säkert som int
     kap = {}
     for _, r in skolor.iterrows():
         try:
@@ -45,124 +50,123 @@ if system_file and form_file:
         except:
             kap[r["Skolenhet"]] = 0
 
-    skol_lista = list(skolor["Skolenhet"])
+    # gruppera skolor per region ✅
+    skolor_per_region = {
+        "Kalmar": skolor[skolor["Region"]=="Kalmar"]["Skolenhet"].tolist(),
+        "Oskarshamn": skolor[skolor["Region"]=="Oskarshamn"]["Skolenhet"].tolist(),
+        "Karlskrona": skolor[skolor["Region"]=="Karlskrona"]["Skolenhet"].tolist()
+    }
 
-    # Sorteringsfunktion (Kalmar → Oskarshamn → Karlskrona)
+    # sorteringsordning
     def school_sort_key(skola):
-        region = skolor.loc[skolor["Skolenhet"] == skola, "Region"].values[0]
-        order = {"Kalmar":0, "Oskarshamn":1, "Karlskrona":2}
+        region = skolor.loc[skolor["Skolenhet"]==skola,"Region"].values[0]
+        order = {"Kalmar":0,"Oskarshamn":1,"Karlskrona":2}
         return (order.get(region,3), skola)
 
-
-    # ===== LÄS STUDENTER =====
+    # ===== STUDENTER =====
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
 
-    fn = [c for c in students.columns if "förnamn" in c.lower()][0]
-    ln = [c for c in students.columns if "efternamn" in c.lower()][0]
+    fn=[c for c in students.columns if "förnamn" in c.lower()][0]
+    ln=[c for c in students.columns if "efternamn" in c.lower()][0]
+    bost=[c for c in students.columns if "bostadsort" in c.lower()][0]
 
-    students["Namn"] = students[fn] + " " + students[ln]
-    student_names = list(students["Namn"])
+    students["Namn"] = students[fn]+" "+students[ln]
+    students["Region"] = students[bost].apply(get_region)
 
-    # ===== PLACERING PER ÅR =====
+    student_records = students.to_dict("records")
+
     cap_used = {}
     skol_data = {}
 
-    def has_space(s, year):
-        return cap_used.get((s,year),0) < kap.get(s,0)
+    def has_space(s,y):
+        return cap_used.get((s,y),0) < kap.get(s,0)
 
-    def use(s, year):
-        cap_used[(s,year)] = cap_used.get((s,year),0)+1
+    def use(s,y):
+        cap_used[(s,y)] = cap_used.get((s,y),0)+1
 
-    def add(s, student, year):
+    def add(s,student,y):
         skol_data.setdefault(s,{})
         skol_data[s].setdefault(student,{
             "År1":"","År2":"","År3":"","År4":""
         })
-        skol_data[s][student][f"År{year}"] = student
+        skol_data[s][student][f"År{y}"] = student
 
-    # 🔥 KRITISKT: loopa per år → alla studenter varje gång
+
+    # ===== PLACERING PER ÅR =====
     for year in [1,2,3,4]:
 
-        for student in student_names:
+        for idx, stud in enumerate(student_records):
 
-            placed = False
+            student = stud["Namn"]
+            region = stud["Region"]
 
-            for s in skol_lista:
-                if has_space(s, year):
-                    add(s, student, year)
-                    use(s, year)
-                    placed = True
+            skol_lista = skolor_per_region.get(region, [])
+
+            if not skol_lista:
+                continue
+
+            # ✅ ROTATION INOM REGION
+            start = (idx + year) % len(skol_lista)
+            ordered = skol_lista[start:] + skol_lista[:start]
+
+            for s in ordered:
+                if has_space(s,year):
+                    add(s,student,year)
+                    use(s,year)
                     break
 
-            # om ingen plats → hoppa (men alla ska normalt få plats)
-            if not placed:
-                pass
 
-
-    # ===== SKAPA EXCEL =====
+    # ===== EXCEL =====
     wb = Workbook()
     ws = wb.active
     ws.title = "Placeringar"
 
-    header_fill = PatternFill(start_color="DDDDDD", fill_type="solid")
+    fill = PatternFill(start_color="DDDDDD", fill_type="solid")
 
     ws.append(["Skola","År1","År2","År3","År4"])
 
-    for skola in sorted(skol_lista, key=school_sort_key):
+    for skola in sorted(list(kap.keys()), key=school_sort_key):
 
         max_platser = int(kap.get(skola,0))
 
-        # rubrikrad
         ws.append([f"{skola} (max {max_platser})"])
         r = ws.max_row
 
         for c in range(1,6):
-            ws.cell(r,c).fill = header_fill
+            ws.cell(r,c).fill = fill
             ws.cell(r,c).font = Font(bold=True)
 
         ws.merge_cells(start_row=r,start_column=1,end_row=r,end_column=5)
 
-        # skapa tomma rader
-        rows = [
-            {"År1":"","År2":"","År3":"","År4":""}
-            for _ in range(max_platser)
-        ]
+        rows = [{"År1":"","År2":"","År3":"","År4":""}
+                for _ in range(max_platser)]
 
-        i = 0
+        i=0
         if skola in skol_data:
-            for student, data in skol_data[skola].items():
-                if i >= max_platser:
+            for student,data in skol_data[skola].items():
+                if i>=max_platser:
                     break
-                rows[i] = data
-                i += 1
+                rows[i]=data
+                i+=1
 
         for row in rows:
-            ws.append([
-                "",
-                row["År1"],
-                row["År2"],
-                row["År3"],
-                row["År4"]
-            ])
+            ws.append(["",row["År1"],row["År2"],row["År3"],row["År4"]])
 
         ws.append([])
-
 
     # ===== RAPPORT =====
     ws2 = wb.create_sheet("Rapport")
     ws2.append(["Student","Status"])
 
-    for s in student_names:
+    for s in students["Namn"]:
         ws2.append([s,"OK"])
 
-
-    # ===== SPARA =====
-    file = "kull_resultat.xlsx"
+    file="kull_resultat.xlsx"
     wb.save(file)
 
     with open(file,"rb") as f:
-        st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
+        st.download_button("⬇️ Ladda ner Excel",f,file_name=file)
 
 else:
     st.info("Ladda upp båda filer")
