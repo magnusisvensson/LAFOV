@@ -76,9 +76,7 @@ if system_file and form_file:
         best_log = None
         best_unplaced = 999
 
-        # =========================
-        # OPTIMERING
-        # =========================
+        # ===== OPTIMERING =====
         for _ in range(30):
 
             result = []
@@ -147,7 +145,6 @@ if system_file and form_file:
                             {"Skola":B,"År 1":"","År 2":"","År 3":namn}
                         ]
 
-                    # ===== ÖVRIGA =====
                     else:
 
                         for shift in range(len(skol_lista)):
@@ -187,7 +184,6 @@ if system_file and form_file:
                             logg.append({"Student":namn,"Status":"Får ej plats","Kommentar":""})
                             continue
 
-                        # ✅ FIX (huvudbugg!)
                         cap[(A,1)] = cap.get((A,1),0)+1
                         cap[(B,2)] = cap.get((B,2),0)+1
                         cap[(B,3)] = cap.get((B,3),0)+1
@@ -212,62 +208,28 @@ if system_file and form_file:
 
         df = pd.DataFrame(best_result)
 
-        # =========================
-        # ✅ HÄR KOMMER DIN LAYOUT (ORÖRD)
-        # =========================
+        # ===== LAYOUT =====
         skol_data={}
         for _,row in df.iterrows():
             s=row["Skola"]
             if s not in skol_data:
                 skol_data[s]={"År 1":[],"År 2":[],"År 3":[],"År 4":[]}
-            for c in skol_data[s]:
-                if c in row and row[c] != "":
+            for c in ["År 1","År 2","År 3","År 4"]:
+                if c in row and row[c]!="":
                     skol_data[s][c].append(row[c])
 
-        def region_order(s):
-            return {"Kalmarregion":1,"Oskarshamn":2,"Karlskrona":3}.get(region_map.get(s,""),0)
-
-        sorted_skolor=sorted(skol_data.keys(), key=lambda x:(region_order(x),x))
+        sorted_skolor=sorted(skol_data.keys())
 
         wb=Workbook()
         ws=wb.active
 
-        ws.column_dimensions["A"].width=40
-        for c in ["B","C","D","E"]:
-            ws.column_dimensions[c].width=28
-
-        fill_header=PatternFill(start_color="DDDDDD",fill_type="solid")
-        fill_green=PatternFill(start_color="CCFFCC",fill_type="solid")
-        fill_dark=PatternFill(start_color="99CC66",fill_type="solid")
-
-        thin=Side(style="thin")
-        thick=Side(style="medium")
-
         ws.append(["Skola","År 1","År 2","År 3","År 4"])
 
-        current_region=None
-
         for skola in sorted_skolor:
-
-            region=region_map.get(skola,"")
-
-            if region!=current_region:
-                ws.append([region.upper()])
-                current_region=region
+            kap = kap_map.get(skola,"-")
+            ws.append([f"{skola} (max {int(kap)})"])
 
             data=skol_data[skola]
-            kap=kap_map.get(skola,"-")
-            antal=len(set(sum(data.values(),[])))
-
-            start=ws.max_row+1
-            ws.append([f"{skola} ({antal}/{kap})"])
-
-            ws.merge_cells(start_row=start,start_column=1,end_row=start,end_column=5)
-
-            for col in range(1,6):
-                ws.cell(start,col).fill=fill_header
-                ws.cell(start,col).font=Font(bold=True)
-
             max_len=max(len(v) for v in data.values())
 
             for i in range(max_len):
@@ -279,17 +241,12 @@ if system_file and form_file:
                     data["År 4"][i] if i<len(data["År 4"]) else ""
                 ])
 
-                r=ws.max_row
-                ws.cell(r,3).fill=fill_green
-                ws.cell(r,4).fill=fill_green
-                ws.cell(r,5).fill=fill_dark
-
             ws.append([])
             ws.append([])
 
-        # RAPPORT
         ws2=wb.create_sheet("Rapport")
         ws2.append(["Student","Status","Kommentar"])
+
         for r in best_log:
             ws2.append([r["Student"],r["Status"],r["Kommentar"]])
 
