@@ -3,7 +3,7 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font
 
-st.title("VFU – Placering (Fungerande A‑B‑B‑C)")
+st.title("VFU – Placering (fungerande version)")
 
 system_file = st.file_uploader("1. Översiktsfil", type=["xlsx"])
 form_file = st.file_uploader("2. Formulärsvar", type=["xlsx"])
@@ -44,9 +44,8 @@ if system_file and form_file:
     }
 
     region_schools={
-        "Kalmar": skolor[skolor["Region"]=="Kalmar"]["Skolenhet"].tolist(),
-        "Oskarshamn": skolor[skolor["Region"]=="Oskarshamn"]["Skolenhet"].tolist(),
-        "Karlskrona": skolor[skolor["Region"]=="Karlskrona"]["Skolenhet"].tolist()
+        reg: skolor[skolor["Region"]==reg]["Skolenhet"].tolist()
+        for reg in ["Kalmar","Oskarshamn","Karlskrona"]
     }
 
     def school_sort_key(s):
@@ -67,7 +66,7 @@ if system_file and form_file:
 
     student_list=students.to_dict("records")
 
-    # ===== PLACERING PER ÅR =====
+    # ===== FÖRDELNING =====
     cap_used={}
     year_assign={1:{},2:{},4:{}}
 
@@ -77,7 +76,7 @@ if system_file and form_file:
     def use(s,y):
         cap_used[(s,y)] = cap_used.get((s,y),0)+1
 
-    # ✅ Fyll År1, År2, År4 för ALLA
+    # ✅ Fyll År1, År2, År4 för ALLA studenter
     for year in [1,2,4]:
 
         for idx, stud in enumerate(student_list):
@@ -86,7 +85,10 @@ if system_file and form_file:
             region=stud["Region"]
             skol_lista=region_schools.get(region,[])
 
-            start=(idx+year) % len(skol_lista)
+            if namn in year_assign[year]:
+                continue
+
+            start=(idx + year) % len(skol_lista)
             ordered=skol_lista[start:]+skol_lista[:start]
 
             for s in ordered:
@@ -95,47 +97,49 @@ if system_file and form_file:
                     use(s,year)
                     break
 
-    # ✅ År3 = År2 (VIKTIGASTE RADEN)
-    year_assign[3] = year_assign[2].copy()
+            # ✅ fallback: garantera plats
+            if namn not in year_assign[year]:
+                for s in skol_lista:
+                    if has_space(s,year):
+                        year_assign[year][namn]=s
+                        use(s,year)
+                        break
 
+    # ✅ År3 = År2
+    year_assign[3]=year_assign[2]
 
-    # ===== BYGG STUDENTDATA =====
-    student_rows={}
-
+    # ===== BYGG DATA =====
+    school_data={}
     for stud in student_list:
 
         namn=stud["Namn"]
 
-        student_rows[namn]={
+        data={
             "År1":year_assign[1].get(namn,""),
             "År2":year_assign[2].get(namn,""),
             "År3":year_assign[3].get(namn,""),
             "År4":year_assign[4].get(namn,"")
         }
 
-
-    # ===== SKOLVY =====
-    school_data={}
-
-    for student,data in student_rows.items():
-        for year,school in data.items():
-            if school=="":
+        for year,skola in data.items():
+            if skola=="":
                 continue
 
-            school_data.setdefault(school,{})
-            school_data[school].setdefault(student,{
+            school_data.setdefault(skola,{})
+            school_data[skola].setdefault(namn,{
                 "År1":"","År2":"","År3":"","År4":""
             })
-            school_data[school][student][year]=student
 
+            school_data[skola][namn][year]=namn
 
     # ===== EXCEL =====
     wb=Workbook()
     ws=wb.active
     ws.title="Placeringar"
 
-    ws.append(["Skola","År1","År2","År3","År4"])
     fill=PatternFill(start_color="DDDDDD",fill_type="solid")
+
+    ws.append(["Skola","År1","År2","År3","År4"])
 
     for skola in sorted(kap.keys(), key=school_sort_key):
 
@@ -166,7 +170,6 @@ if system_file and form_file:
 
         ws.append([])
 
-
     # ===== RAPPORT =====
     ws2=wb.create_sheet("Rapport")
     ws2.append(["Student","Status"])
@@ -182,4 +185,3 @@ if system_file and form_file:
 
 else:
     st.info("Ladda upp båda filer")
-
