@@ -12,7 +12,7 @@ form_file = st.file_uploader("2. Ladda formulärsvar", type=["xlsx"])
 kull = st.number_input("Använd skolenheter planerade för kull:", value=26)
 program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
 
-# ===== REGIONLOGIK =====
+# ===== REGION =====
 def get_region(text):
     t = str(text).lower()
     if "oskarshamn" in t: return "Oskarshamn"
@@ -20,28 +20,39 @@ def get_region(text):
     return "Kalmar"
 
 def school_region(partner, skola):
-    p = str(partner).lower()
     s = str(skola).lower()
+    p = str(partner).lower()
 
-    # KORRIGERINGAR
     if "ljungnäs" in s or "blomstermåla" in s:
         return "Kalmar"
-
     if "oskarshamn" in p:
         return "Oskarshamn"
     if "karlskrona" in p or "ronneby" in p:
         return "Karlskrona"
     return "Kalmar"
 
-# ===== APP =====
-if system_file is not None and form_file is not None:
+# ===== ENKEL AVSTÅNDSAPPROX =====
+geo = {
+    "Kalmar": (56.66,16.36),
+    "Oskarshamn": (57.26,16.45),
+    "Karlskrona": (56.16,15.59)
+}
+
+def dist(a,b):
+    if a not in geo or b not in geo:
+        return 0
+    d=((geo[a][0]-geo[b][0])**2+(geo[a][1]-geo[b][1])**2)**0.5
+    return round(d*111,1)
+
+# ===== MAIN =====
+if system_file and form_file:
 
     skolor = pd.read_excel(system_file)
     skolor.columns = skolor.columns.str.strip()
 
     skolor = skolor[
-        (skolor["Kull"] == kull) &
-        (skolor["Inriktning"].str.upper() == program)
+        (skolor["Kull"]==kull) &
+        (skolor["Inriktning"].str.upper()==program)
     ].copy()
 
     skolor["Region"] = skolor.apply(
@@ -53,113 +64,100 @@ if system_file is not None and form_file is not None:
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
 
-    fn = [c for c in students.columns if "förnamn" in c.lower()][0]
-    ln = [c for c in students.columns if "efternamn" in c.lower()][0]
-    bost = [c for c in students.columns if "bostadsort" in c.lower()][0]
+    fn=[c for c in students.columns if "förnamn" in c.lower()][0]
+    ln=[c for c in students.columns if "efternamn" in c.lower()][0]
+    bost=[c for c in students.columns if "bostadsort" in c.lower()][0]
 
-    students["Namn"] = students[fn] + " " + students[ln]
+    students["Namn"] = students[fn]+" "+students[ln]
     students["Region"] = students[bost].apply(get_region)
 
-    skol_data = {}
     cap_used = {}
-    logg = []
+    skol_data = {}
+    logg = {}
+    group_id = 0
 
-    def add(skola, student, col):
+    # ===== HELP =====
+    def has_space(skola,år,n):
+        return cap_used.get((skola,år),0)+n <= kap.get(skola,999)
+
+    def use(skola,år,n):
+        cap_used[(skola,år)] = cap_used.get((skola,år),0)+n
+
+    def add(skola,student,col,group):
         skol_data.setdefault(skola,{})
-        skol_data[skola].setdefault(student,{"År1":"","År2":"","År3":"","År4":""})
-        skol_data[skola][student][col] = student
+        skol_data[skola].setdefault(student,{
+            "År1":"","År2":"","År3":"","År4":"",
+            "Group":group
+        })
+        skol_data[skola][student][col]=student
 
-    # ===== HJÄLP: CHECK PER ÅR =====
-    def has_space(skola, år, n):
-        return cap_used.get((skola,år),0) + n <= kap.get(skola,999)
+    # ===== PLACERING =====
+    def place(group):
 
-    def use(skola, år, n):
-        cap_used[(skola,år)] = cap_used.get((skola,år),0) + n
+        nonlocal group_id
 
-    # ===== KÄRNPLACERING =====
-    def place(students_list):
-
-        region = students_list[0]["Region"]
-        names = [s["Namn"] for s in students_list]
+        region = group[0]["Region"]
+        names = [s["Namn"] for s in group]
         n = len(names)
 
-        regional = skolor[skolor["Region"] == region]["Skolenhet"].tolist()
+        regional = skolor[skolor["Region"]==region]["Skolenhet"].tolist()
         all_schools = list(skolor["Skolenhet"])
 
-        search_lists = [
-            regional,
-            regional + [s for s in all_schools if s not in regional],
-            all_schools
-        ]
+        möjliga = regional + [s for s in all_schools if s not in regional]
 
-        for möjliga in search_lists:
+        # FULL rotation
+        for i in range(len(möjliga)-2):
+            A,B,C = möjliga[i],möjliga[i+1],möjliga[i+2]
 
-            # ✅ 1: FULL ROTATION
-            for i in range(len(möjliga)-2):
-                A,B,C = möjliga[i], möjliga[i+1], möjliga[i+2]
+            if all([
+                has_space(A,1,n),
+                has_space(B,2,n),
+                has_space(B,3,n),
+                has_space(C,4,n)
+            ]):
+                for s in names:
+                    add(A,s,"År1",group_id)
+                    add(B,s,"År2",group_id)
+                    add(B,s,"År3",group_id)
+                    add(C,s,"År4",group_id)
 
-                if all([
-                    has_space(A,1,n),
-                    has_space(B,2,n),
-                    has_space(B,3,n),
-                    has_space(C,4,n)
-                ]):
-                    for s in names:
-                        add(A,s,"År1")
-                        add(B,s,"År2")
-                        add(B,s,"År3")
-                        add(C,s,"År4")
+                use(A,1,n); use(B,2,n); use(B,3,n); use(C,4,n)
 
-                    use(A,1,n); use(B,2,n); use(B,3,n); use(C,4,n)
-                    return True
+                for s in names:
+                    logg[s]={"Status":"OK","Dist":max(dist(region,region),0)}
 
-            # ✅ 2: TVÅ SKOLOR
-            for i in range(len(möjliga)-1):
-                A,B = möjliga[i], möjliga[i+1]
+                group_id += 1
+                return True
 
-                if all([
-                    has_space(A,1,n),
-                    has_space(B,2,n),
-                    has_space(A,3,n),
-                    has_space(B,4,n)
-                ]):
-                    for s in names:
-                        add(A,s,"År1")
-                        add(B,s,"År2")
-                        add(A,s,"År3")
-                        add(B,s,"År4")
-
-                    use(A,1,n); use(B,2,n); use(A,3,n); use(B,4,n)
-                    return True
-
-        # ✅ 3: MAXFYLL PER ÅR
-        for skola in all_schools:
+        # MAXFYLL per år
+        for skola in möjliga:
             for år,col in [(1,"År1"),(2,"År2"),(3,"År3"),(4,"År4")]:
                 if has_space(skola,år,n):
                     for s in names:
-                        add(skola,s,col)
+                        add(skola,s,col,group_id)
                     use(skola,år,n)
+
+                    for s in names:
+                        logg[s]={"Status":"OK","Dist":dist(region,get_region(s))}
+
+                    group_id += 1
                     return True
 
         return False
 
-    # ===== DYNAMISKA GRUPPER =====
     stud_list = students.to_dict("records")
-
     i = 0
+
     while i < len(stud_list):
 
         if place(stud_list[i:i+3]):
-            logg += [{"Student":s["Namn"],"Status":"OK"} for s in stud_list[i:i+3]]
             i += 3
         elif place(stud_list[i:i+2]):
-            logg += [{"Student":s["Namn"],"Status":"OK"} for s in stud_list[i:i+2]]
             i += 2
         elif place([stud_list[i]]):
-            logg.append({"Student":stud_list[i]["Namn"],"Status":"OK"})
             i += 1
         else:
-            logg.append({"Student":stud_list[i]["Namn"],"Status":"Får ej plats"})
+            logg[stud_list[i]["Namn"]]={"Status":"Får ej plats","Dist":0}
             i += 1
 
     # ===== EXCEL =====
@@ -170,34 +168,64 @@ if system_file is not None and form_file is not None:
     for c in ["B","C","D","E"]:
         ws.column_dimensions[c].width = 25
 
-    fill = PatternFill(start_color="DDDDDD", fill_type="solid")
+    fill_header = PatternFill(start_color="DDDDDD",fill_type="solid")
+    fill_yellow = PatternFill(start_color="FFE699",fill_type="solid")
+    fill_red = PatternFill(start_color="FF9999",fill_type="solid")
 
     ws.append(["Skola","År1","År2","År3","År4"])
 
     for skola in sorted(skol_data):
 
-        ws.append([f"{skola} (max {int(kap.get(skola,0))})"])
+        max_platser = int(kap.get(skola,0))
+
+        ws.append([f"{skola} (max {max_platser})"])
         r = ws.max_row
 
         for c in range(1,6):
-            ws.cell(r,c).fill = fill
+            ws.cell(r,c).fill = fill_header
             ws.cell(r,c).font = Font(bold=True)
 
         ws.merge_cells(start_row=r,start_column=1,end_row=r,end_column=5)
 
-        for student, years in skol_data[skola].items():
-            ws.append(["", years["År1"], years["År2"], years["År3"], years["År4"]])
+        rows = [{"År1":"","År2":"","År3":"","År4":""} for _ in range(max_platser)]
+
+        for student,data in skol_data[skola].items():
+
+            idx = data["Group"] % max_platser
+
+            for col in ["År1","År2","År3","År4"]:
+                if data[col]:
+                    rows[idx][col] = student
+
+        for row_data in rows:
+
+            ws.append(["",row_data["År1"],row_data["År2"],row_data["År3"],row_data["År4"]])
+            rr = ws.max_row
+
+            for c in range(2,6):
+                namn = ws.cell(rr,c).value
+
+                if namn in logg:
+                    km = logg[namn]["Dist"]
+
+                    if km >= 50:
+                        ws.cell(rr,c).fill = fill_red
+                    elif km >= 30:
+                        ws.cell(rr,c).fill = fill_yellow
 
         ws.append([])
 
     ws2 = wb.create_sheet("Rapport")
     ws2.append(["Student","Status"])
 
-    for r in logg:
-        ws2.append([r["Student"], r["Status"]])
+    for s,v in logg.items():
+        ws2.append([s,v["Status"]])
 
-    file = "kull_resultat.xlsx"
+    file="kull_resultat.xlsx"
     wb.save(file)
 
-    with open(file, "rb") as f:
-        st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
+    with open(file,"rb") as f:
+        st.download_button("⬇️ Ladda ner Excel",f,file_name=file)
+
+else:
+    st.info("Ladda upp båda filer")
