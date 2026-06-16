@@ -1,16 +1,8 @@
-import streamlit as st
-import pandas as pd
-from openpyxl import Workbook
-from openpyxl.styles import PatternFill, Font
-
-st.title("VFU – Placering")
-
-system_file = st.file_uploader("1. Översiktsfil", type=["xlsx"])
+import streamlit as stimport streamlit as stploader("1. Översiktsfil", type=["xlsx"])
 form_file = st.file_uploader("2. Formulärsvar", type=["xlsx"])
 
 kull = st.number_input("Använd skolor planerade för kull:", value=26)
 program = st.selectbox("Inom program:", ["LAFOV","LAGRV","LGFRI"])
-
 
 # ===== REGION =====
 def get_region(text):
@@ -29,24 +21,10 @@ def school_region(partner):
         return "Karlskrona"
     return "Kalmar"
 
-# ===== SORTERING =====
 def school_sort_key(skola):
-    region = skolor.loc[skolor["Skolenhet"]==skola,"Region"].values[0]
-    order = {"Kalmar":0,"Oskarshamn":1,"Karlskrona":2}
+    region = skolor.loc[skolor["Skolenhet"] == skola, "Region"].values[0]
+    order = {"Kalmar":0, "Oskarshamn":1, "Karlskrona":2}
     return (order.get(region,3), skola)
-
-# ===== AVSTÅND (enkel region-baserad) =====
-geo = {
-    "Kalmar": (56.66,16.36),
-    "Oskarshamn": (57.26,16.45),
-    "Karlskrona": (56.16,15.59)
-}
-
-def dist(a,b):
-    if a not in geo or b not in geo:
-        return 0
-    d=((geo[a][0]-geo[b][0])**2+(geo[a][1]-geo[b][1])**2)**0.5
-    return round(d*111,1)
 
 
 # ===== MAIN =====
@@ -74,15 +52,11 @@ if system_file and form_file:
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
 
-    fn=[c for c in students.columns if "förnamn" in c.lower()][0]
-    ln=[c for c in students.columns if "efternamn" in c.lower()][0]
-    bost=[c for c in students.columns if "bostadsort" in c.lower()][0]
+    fn = [c for c in students.columns if "förnamn" in c.lower()][0]
+    ln = [c for c in students.columns if "efternamn" in c.lower()][0]
+    bost = [c for c in students.columns if "bostadsort" in c.lower()][0]
 
-    # ev alternativ bostad
-    alt_cols = [c for c in students.columns if "alternativ" in c.lower()]
-    alt_col = alt_cols[0] if alt_cols else None
-
-    students["Namn"] = students[fn]+" "+students[ln]
+    students["Namn"] = students[fn] + " " + students[ln]
     students["Region"] = students[bost].apply(get_region)
 
     skol_data = {}
@@ -114,8 +88,9 @@ if system_file and form_file:
 
         skol_lista = list(skolor["Skolenhet"])
 
-        # --- 1 rotation ---
+        # --- rotation ---
         for i in range(len(skol_lista)-2):
+
             A,B,C = skol_lista[i],skol_lista[i+1],skol_lista[i+2]
 
             if region in ["Oskarshamn","Karlskrona"]:
@@ -127,7 +102,7 @@ if system_file and form_file:
                     add(B,namn,"År4")
 
                     use(A,1); use(B,2); use(A,3); use(B,4)
-                    logg[namn] = {"Status":"OK"}
+                    logg[namn] = "OK"
                     return
             else:
                 if all([has_space(A,1),has_space(B,2),has_space(B,3),has_space(C,4)]):
@@ -138,34 +113,36 @@ if system_file and form_file:
                     add(C,namn,"År4")
 
                     use(A,1); use(B,2); use(B,3); use(C,4)
-                    logg[namn] = {"Status":"OK"}
+                    logg[namn] = "OK"
                     return
 
-        # --- fallback (fixad) ---
+        # --- fallback ---
         år_lista = [("År1",1),("År2",2),("År3",3),("År4",4)]
-        used_skolor=set()
+        used=set()
 
-        for år, nr in år_lista:
+        for col,nr in år_lista:
 
-            placed=False
+            placed = False
 
             for s in skol_lista:
 
-                if s in used_skolor:
+                if s in used:
                     continue
 
-                if has_space(s,nr):
-                    add(s,namn,år)
-                    use(s,nr)
-                    used_skolor.add(s)
-                    placed=True
+                if has_space(s, nr):
+
+                    add(s, namn, col)
+                    use(s, nr)
+
+                    used.add(s)
+                    placed = True
                     break
 
             if not placed:
-                logg[namn]={"Status":"Får ej plats"}
+                logg[namn] = "Ej placerad"
                 return
 
-        logg[namn]={"Status":"OK*"}
+        logg[namn] = "OK"
 
     # ===== KÖR =====
     for stud in students.to_dict("records"):
@@ -208,40 +185,13 @@ if system_file and form_file:
 
         ws.append([])
 
-    # ===== NY FLik: SAMMANSTÄLLNING =====
-    ws2 = wb.create_sheet("Sammanställning")
+    # ===== RAPPORT (ENDAST STATUS) =====
+    ws2 = wb.create_sheet("Rapport")
+    ws2.append(["Student","Status"])
 
-    ws2.append(["Student","Bostadsort","Alternativ","Max avstånd (km)"])
-
-    for _, row in students.iterrows():
-
-        namn = row["Namn"]
-        bostad = row[bost]
-        alt = row[alt_col] if alt_col else ""
-
-        region = get_region(bostad)
-
-        max_dist = 0
-
-        for skola in skol_data:
-            if namn in skol_data[skola]:
-
-                sk_region = skolor.loc[
-                    skolor["Skolenhet"]==skola, "Region"
-                ].values[0]
-
-                d = dist(region, sk_region)
-                if d > max_dist:
-                    max_dist = d
-
-        ws2.append([namn, bostad, alt, max_dist])
-
-    # ===== RAPPORT =====
-    ws3 = wb.create_sheet("Rapport")
-    ws3.append(["Student","Status"])
-
-    for s,v in logg.items():
-        ws3.append([s,v["Status"]])
+    for s in students["Namn"]:
+        status = logg.get(s, "Ej placerad")
+        ws2.append([s, status])
 
     file="kull_resultat.xlsx"
     wb.save(file)
@@ -251,3 +201,9 @@ if system_file and form_file:
 
 else:
     st.info("Ladda upp båda filer")
+import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import PatternFill, Font
+
+st.title("VFU – Placering")
+
