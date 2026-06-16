@@ -30,13 +30,12 @@ def norm(text):
         return "Kalmar"
     return text
 
-def dist_km(a,b):
+def dist_km_raw(a,b):
     if a not in geo or b not in geo:
         return None
     d=((geo[a][0]-geo[b][0])**2+(geo[a][1]-geo[b][1])**2)**0.5
     return round(d*111,1)
 
-# ================= MAIN =================
 if system_file and form_file:
 
     skolor_all = pd.read_excel(system_file)
@@ -60,15 +59,15 @@ if system_file and form_file:
 
     for _,row in skolor.iterrows():
 
-        skola = row["Skolenhet"]
-        partner = str(row.get("Partnerområde",""))
+        skola=row["Skolenhet"]
+        partner=str(row.get("Partnerområde",""))
 
         if any(x in partner for x in ["Kalmar","Nybro","Mönsterås"]):
-            base = base_geo["Kalmar"]
+            base=base_geo["Kalmar"]
         elif "Oskarshamn" in partner:
-            base = base_geo["Oskarshamn"]
+            base=base_geo["Oskarshamn"]
         elif "Karlskrona" in partner:
-            base = base_geo["Karlskrona"]
+            base=base_geo["Karlskrona"]
         else:
             continue
 
@@ -79,7 +78,8 @@ if system_file and form_file:
 
         school_geo[skola]=(base[0]+lat, base[1]+lon)
 
-    def distance_km(student_ort, skola):
+    def distance_km(student_ort,skola):
+
         student_ort = norm(student_ort)
 
         if student_ort not in geo:
@@ -113,17 +113,17 @@ if system_file and form_file:
     students["Ort"]=students["Ort"].apply(norm)
     students["Namn"]=students[fn]+" "+students[ln]
 
-    best_result = None
-    best_log = None
-    best_count = 0
+    best_result=None
+    best_log=None
+    best_count=0
 
-    for _ in range(20):  # ✅ optimering
+    for _ in range(20):
 
         cap={}
         placements=[]
         logg=[]
 
-        shuffled = students.sample(frac=1)
+        shuffled=students.sample(frac=1)
 
         skol_lista=list(skolor["Skolenhet"])
 
@@ -163,18 +163,13 @@ if system_file and form_file:
             cap[(C,4)]=cap.get((C,4),0)+1
 
             placements.append({
-                "Student":namn,
-                "A":A,
-                "B":B,
-                "C":C,
-                "Ort":ort
+                "Student":namn,"A":A,"B":B,"C":C,"Ort":ort
             })
 
             dists=[]
             for s in [A,B,C]:
                 d=distance_km(ort,s)
-                if d:
-                    dists.append((s,d))
+                if d: dists.append((s,d))
 
             if dists:
                 sk,dist=max(dists,key=lambda x:x[1])
@@ -193,9 +188,14 @@ if system_file and form_file:
     wb=Workbook()
     ws=wb.active
 
+    # bredare kolumner
+    ws.column_dimensions["A"].width=40
+    for c in ["B","C","D","E"]:
+        ws.column_dimensions[c].width=28
+
     fill_header=PatternFill(start_color="DDDDDD",fill_type="solid")
-    fill_green=PatternFill(start_color="CCFFCC",fill_type="solid")
-    fill_dark=PatternFill(start_color="99CC66",fill_type="solid")
+    fill_warn=PatternFill(start_color="FFE699",fill_type="solid")
+    fill_danger=PatternFill(start_color="FF9999",fill_type="solid")
 
     ws.append(["Skola","År 1","År 2","År 3","År 4"])
 
@@ -206,29 +206,37 @@ if system_file and form_file:
         student=p["Student"]
         A,B,C=p["A"],p["B"],p["C"]
 
-        skol_data.setdefault(A,{})
-        skol_data[A].setdefault(student,{"År1":"","År2":"","År3":"","År4":""})
-        skol_data[A][student]["År1"]=student
+        for skola in [A,B,C]:
+            skol_data.setdefault(skola,{})
+            skol_data[skola].setdefault(student,
+                {"År1":"","År2":"","År3":"","År4":""})
 
-        skol_data.setdefault(B,{})
-        skol_data[B].setdefault(student,{"År1":"","År2":"","År3":"","År4":""})
+        skol_data[A][student]["År1"]=student
         skol_data[B][student]["År2"]=student
         skol_data[B][student]["År3"]=student
-
-        skol_data.setdefault(C,{})
-        skol_data[C].setdefault(student,{"År1":"","År2":"","År3":"","År4":""})
         skol_data[C][student]["År4"]=student
 
     for skola in sorted(skol_data):
 
-        ws.append([f"{skola} (max {int(kap_map.get(skola,0))})"])
-        start=ws.max_row
+        kap=kap_map.get(skola,0)
+        placed=len(skol_data[skola])
+
+        # kapacitetsfärg
+        ratio=placed/max(kap,1)
+        color=fill_header
+        if ratio>=1: color=fill_danger
+        elif ratio>=0.8: color=fill_warn
+
+        row=ws.max_row+1
+        ws.append([f"{skola} (max {int(kap)} | {placed} placerade)"])
 
         for c in range(1,6):
-            ws.cell(start,c).fill=fill_header
-            ws.cell(start,c).font=Font(bold=True)
+            ws.cell(row,c).fill=color
+            ws.cell(row,c).font=Font(bold=True)
 
-        for student,years in skol_data[skola].items():
+        ws.merge_cells(start_row=row,start_column=1,end_row=row,end_column=5)
+
+        for student,years in sorted(skol_data[skola].items()):
 
             ws.append([
                 "",
@@ -238,24 +246,29 @@ if system_file and form_file:
                 years["År4"]
             ])
 
-            r=ws.max_row
-            ws.cell(r,3).fill=fill_green
-            ws.cell(r,4).fill=fill_green
-            ws.cell(r,5).fill=fill_dark
-
-        ws.append([])
-
     ws2=wb.create_sheet("Rapport")
     ws2.append(["Student","Status","Avstånd"])
 
     for r in best_log:
+
+        row=ws2.max_row+1
         ws2.append([r["Student"],r["Status"],r["Avstånd"]])
+
+        text=str(r["Avstånd"])
+
+        if "km" in text:
+            km=float(text.split(",")[1].replace("km","").strip())
+
+            if km>80:
+                ws2.cell(row,3).fill=fill_danger
+            elif km>50:
+                ws2.cell(row,3).fill=fill_warn
 
     file="kull_resultat.xlsx"
     wb.save(file)
 
     with open(file,"rb") as f:
-        st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
+        st.download_button("⬇️ Ladda ner Excel",f,file_name=file)
 
 else:
     st.info("Ladda upp filer")
