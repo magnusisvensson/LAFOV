@@ -1,8 +1,9 @@
 
 import streamlit as st
 import pandas as pd
+import hashlib
 from openpyxl import Workbook
-from openpyxl.styles import PatternFill, Border, Side, Alignment, Font
+from openpyxl.styles import PatternFill, Font
 
 st.title("VFU-system – Placering")
 
@@ -12,268 +13,257 @@ form_file = st.file_uploader("2. Ladda formulärsvar", type=["xlsx"])
 kull = st.number_input("Kull", value=26)
 program = st.selectbox("Välj inriktning", ["LAFOV", "LAGRV", "LGFRI"])
 
-# ========= GEO =========
+# ================= GEO =================
 geo = {
     "Kalmar": (56.66, 16.36),
     "Oskarshamn": (57.26, 16.45),
     "Karlskrona": (56.16, 15.59),
-    "Ronneby": (56.21, 15.28),
-    "Nybro": (56.74, 15.91)
+    "Ronneby": (56.21, 15.28)
 }
 
 def normalize_location(text):
     t = str(text).lower()
-    if "påskallavik" in t: return "Oskarshamn"
-    if "kallinge" in t: return "Ronneby"
-    if any(x in t for x in ["lindsdal","rinkabyholm","färjestaden","nybro","emmaboda"]):
+    if "påskallavik" in t:
+        return "Oskarshamn"
+    if "kallinge" in t:
+        return "Ronneby"
+    if any(x in t for x in ["kalmar","lindsdal","nybro","emmaboda","mönsterås","färjestaden"]):
         return "Kalmar"
     return text
 
 def distance(a, b):
-    a = normalize_location(a)
-    b = normalize_location(b)
-
     if a not in geo or b not in geo:
         return None
-
     return ((geo[a][0]-geo[b][0])**2 + (geo[a][1]-geo[b][1])**2)**0.5
 
-def distance_km(a, b):
+def distance_km_raw(a, b):
     d = distance(a, b)
     if d is None:
         return None
     return round(d * 111, 1)
 
-def get_region(text):
-    text = str(text)
-    if any(x in text for x in ["Kalmar","Nybro","Mönsterås"]):
-        return "Kalmarregion"
-    if "Oskarshamn" in text:
-        return "Oskarshamn"
-    if "Karlskrona" in text:
-        return "Karlskrona"
-    return "Kalmarregion"
-
-def find_column(cols,keywords):
-    for c in cols:
-        if any(k.lower() in c.lower() for k in keywords):
-            return c
-    return None
-
-# ===============================
+# ================= MAIN =================
 if system_file and form_file:
 
-    try:
-        skolor_all = pd.read_excel(system_file)
-        skolor_all.columns = skolor_all.columns.str.strip()
+    skolor_all = pd.read_excel(system_file)
+    skolor_all.columns = skolor_all.columns.str.strip()
 
-        # ===== Tipsdata =====
-        vakanta = skolor_all[
-            (skolor_all["Kull"].astype(str).str.contains("VAKANT", case=False, na=False)) &
-            (skolor_all["Inriktning"].str.upper() == program)
-        ]
+    skolor = skolor_all[
+        (skolor_all["Kull"] == kull) &
+        (skolor_all["Inriktning"].str.upper() == program)
+    ].copy()
 
-        vakant_info = [
-            f"{r['Skolenhet']} ({int(r['Antal platser'])} platser)"
-            for _, r in vakanta.iterrows()
-            if pd.notna(r["Antal platser"]) and r["Antal platser"] > 0
-        ]
+    kap_map = dict(zip(skolor["Skolenhet"], skolor["Antal platser"]))
 
-        andra_kullar = skolor_all[
-            (skolor_all["Inriktning"].str.upper() == program) &
-            (skolor_all["Kull"] != kull) &
-            (~skolor_all["Kull"].astype(str).str.contains("VAKANT", case=False, na=False))
-        ]
+    # ===== AUTO GEO FÖR ALLA SKOLOR =====
+    base_geo = {
+        "Kalmar": (56.66, 16.36),
+        "Oskarshamn": (57.26, 16.45),
+        "Karlskrona": (56.16, 15.59)
+    }
 
-        andra_info = [
-            f"{r['Skolenhet']} ({int(r['Antal platser'])} platser)"
-            for _, r in andra_kullar.iterrows()
-            if pd.notna(r["Antal platser"])
-        ]
+    school_geo = {}
 
-        # ===== filtrera kull =====
-        skolor = skolor_all[
-            (skolor_all["Kull"] == kull) &
-            (skolor_all["Inriktning"].str.upper() == program)
-        ].copy()
+    for _, row in skolor.iterrows():
+        skola = row["Skolenhet"]
+        partner = str(row.get("Partnerområde", ""))
 
-        kap_map = dict(zip(skolor["Skolenhet"], skolor["Antal platser"]))
+        if any(x in partner for x in ["Kalmar","Nybro","Mönsterås"]):
+            base = base_geo["Kalmar"]
+        elif "Oskarshamn" in partner:
+            base = base_geo["Oskarshamn"]
+        elif "Karlskrona" in partner:
+            base = base_geo["Karlskrona"]
+        else:
+            continue
 
-        # ===== STUDENTER =====
-        students = pd.read_excel(form_file, sheet_name="Data")
-        students.columns = students.columns.str.strip()
+        h = int(hashlib.md5(skola.encode()).hexdigest(), 16)
 
-        fn = find_column(students.columns, ["förnamn"])
-        ln = find_column(students.columns, ["efternamn"])
-        bost = find_column(students.columns, ["bostadsort"])
-        alt = find_column(students.columns, ["alternativ"])
-        val = find_column(students.columns, ["helst"])
+        offset_lat = ((h % 1000) / 1000 - 0.5) * 0.15
+        offset_lon = (((h // 1000) % 1000) / 1000 - 0.5) * 0.15
 
-        def choose_location(row):
-            if "alternativ" in str(row.get(val,"")).lower():
-                if pd.notna(row.get(alt)):
-                    return row.get(alt)
-            return row.get(bost)
+        school_geo[skola] = (
+            base[0] + offset_lat,
+            base[1] + offset_lon
+        )
 
-        students["Ort"] = students.apply(choose_location, axis=1)
-        students["Ort"] = students["Ort"].apply(normalize_location)
-        students["Namn"] = students[fn] + " " + students[ln]
+    def distance_km(student_ort, skola):
+        student_ort = normalize_location(student_ort)
 
-        cap = {}
-        result = []
-        logg = []
+        if student_ort not in geo or skola not in school_geo:
+            return None
 
-        for i, (_, student) in enumerate(students.iterrows()):
+        lat1, lon1 = geo[student_ort]
+        lat2, lon2 = school_geo[skola]
 
-            namn = student["Namn"]
-            ort = student["Ort"]
+        d = ((lat1 - lat2)**2 + (lon1 - lon2)**2)**0.5
+        return round(d * 111, 1)
 
-            skol_lista = list(skolor["Skolenhet"])
-            skol_lista = sorted(skol_lista, key=lambda s: distance(ort, s) or 999)
+    # ===== STUDENTER =====
+    students = pd.read_excel(form_file, sheet_name="Data")
+    students.columns = students.columns.str.strip()
 
-            placed = False
+    fn = [c for c in students.columns if "förnamn" in c.lower()][0]
+    ln = [c for c in students.columns if "efternamn" in c.lower()][0]
 
-            for shift in range(len(skol_lista)):
-                A = skol_lista[(i+shift)%len(skol_lista)]
-                B = skol_lista[(i+1+shift)%len(skol_lista)]
-                C = skol_lista[(i+2+shift)%len(skol_lista)]
+    bost = [c for c in students.columns if "bostadsort" in c.lower()][0]
+    alt = [c for c in students.columns if "alternativ" in c.lower()][0]
+    val = [c for c in students.columns if "helst" in c.lower()][0]
 
-                if (
-                    cap.get((A,1),0) < kap_map.get(A,999) and
-                    cap.get((B,2),0) < kap_map.get(B,999) and
-                    cap.get((B,3),0) < kap_map.get(B,999) and
-                    cap.get((C,4),0) < kap_map.get(C,999)
-                ):
-                    placed = True
-                    break
+    def choose_loc(row):
+        if "alternativ" in str(row.get(val,"")).lower():
+            return row.get(alt)
+        return row.get(bost)
 
-            if not placed:
-                if vakant_info:
-                    tips = "Vakant: " + ", ".join(vakant_info)
-                elif andra_info:
-                    tips = "Andra kullar: " + ", ".join(andra_info)
+    students["Ort"] = students.apply(choose_loc, axis=1)
+    students["Ort"] = students["Ort"].apply(normalize_location)
+    students["Namn"] = students[fn] + " " + students[ln]
+
+    cap = {}
+    result = []
+    logg = []
+
+    skol_lista = list(skolor["Skolenhet"])
+
+    for i, (_, student) in enumerate(students.iterrows()):
+
+        namn = student["Namn"]
+        ort = student["Ort"]
+
+        # ✅ sortera efter avstånd
+        skol_sorted = sorted(
+            skol_lista,
+            key=lambda s: distance_km(ort, s) if distance_km(ort, s) else 999
+        )
+
+        # ✅ GROUP BEHAVIOR (försök hålla ihop)
+        if i > 0:
+            prev = students.iloc[i-1]["Namn"]
+            prev_assignments = [r for r in result if prev in r.values()]
+
+            if prev_assignments:
+                skol_guess = [r["Skola"] for r in prev_assignments[:3]]
+
+                if all(cap.get((s,1),0) < kap_map.get(s,999) for s in skol_guess):
+                    A, B, C = skol_guess
                 else:
-                    tips = "Övertaligt"
-
-                logg.append({
-                    "Student":namn,
-                    "Status":"Får ej plats",
-                    "Kommentar":"",
-                    "Tips":tips,
-                    "Avstånd":"-"
-                })
-                continue
-
-            # ✅ uppdatera kapacitet
-            cap[(A,1)] = cap.get((A,1),0)+1
-            cap[(B,2)] = cap.get((B,2),0)+1
-            cap[(B,3)] = cap.get((B,3),0)+1
-            cap[(C,4)] = cap.get((C,4),0)+1
-
-            # ✅ ROTATION
-            result += [
-                {"Skola":A,"År 1":namn,"År 2":"","År 3":"","År 4":""},
-                {"Skola":B,"År 1":"","År 2":namn,"År 3":namn,"År 4":""},
-                {"Skola":C,"År 1":"","År 2":"","År 3":"","År 4":namn}
-            ]
-
-            # ✅ AVSTÅND (max av A,B,C)
-            dists = []
-
-            for skola in [A,B,C]:
-                d = distance_km(ort, skola)
-                if d is not None:
-                    dists.append((skola, d))
-
-            if dists:
-                longest_school, longest_dist = max(dists, key=lambda x: x[1])
-                avst_text = f"Längsta pendling: {longest_school}, {longest_dist} km"
+                    A = skol_sorted[0]
+                    B = skol_sorted[1 % len(skol_sorted)]
+                    C = skol_sorted[2 % len(skol_sorted)]
             else:
-                avst_text = "Okänt avstånd"
+                A = skol_sorted[0]
+                B = skol_sorted[1 % len(skol_sorted)]
+                C = skol_sorted[2 % len(skol_sorted)]
+        else:
+            A = skol_sorted[0]
+            B = skol_sorted[1 % len(skol_sorted)]
+            C = skol_sorted[2 % len(skol_sorted)]
 
+        # ✅ kapasitet
+        if (
+            cap.get((A,1),0) >= kap_map.get(A,999) or
+            cap.get((B,2),0) >= kap_map.get(B,999) or
+            cap.get((B,3),0) >= kap_map.get(B,999) or
+            cap.get((C,4),0) >= kap_map.get(C,999)
+        ):
             logg.append({
                 "Student":namn,
-                "Status":"OK",
+                "Status":"Får ej plats",
                 "Kommentar":"",
-                "Tips":"",
-                "Avstånd":avst_text
+                "Tips":"Kapacitet slut",
+                "Avstånd":"-"
             })
+            continue
 
-        df = pd.DataFrame(result)
+        # ✅ update cap
+        cap[(A,1)] = cap.get((A,1),0)+1
+        cap[(B,2)] = cap.get((B,2),0)+1
+        cap[(B,3)] = cap.get((B,3),0)+1
+        cap[(C,4)] = cap.get((C,4),0)+1
 
-        # ===== EXCEL =====
-        wb = Workbook()
-        ws = wb.active
+        result += [
+            {"Skola":A,"År 1":namn,"År 2":"","År 3":"","År 4":""},
+            {"Skola":B,"År 1":"","År 2":namn,"År 3":namn,"År 4":""},
+            {"Skola":C,"År 1":"","År 2":"","År 3":"","År 4":namn}
+        ]
 
-        fill_green = PatternFill(start_color="CCFFCC", fill_type="solid")
-        fill_dark = PatternFill(start_color="99CC66", fill_type="solid")
-        fill_header = PatternFill(start_color="DDDDDD", fill_type="solid")
-        fill_red = PatternFill(start_color="FF9999", fill_type="solid")
+        # ✅ DISTANS
+        distances = []
+        for s in [A,B,C]:
+            d = distance_km(ort, s)
+            if d:
+                distances.append((s,d))
 
-        ws.append(["Skola","År 1","År 2","År 3","År 4"])
+        if distances:
+            longest = max(distances, key=lambda x: x[1])
+            avst = f"Längsta pendling: {longest[0]}, {longest[1]} km"
+        else:
+            avst = "Okänd"
 
-        for skola in sorted(df["Skola"].unique()):
+        logg.append({
+            "Student":namn,
+            "Status":"OK",
+            "Kommentar":"",
+            "Tips":"",
+            "Avstånd":avst
+        })
 
-            kap = kap_map.get(skola)
+    df = pd.DataFrame(result)
 
-            if kap is None or kap == 0:
-                rubrik = f"{skola} (MAX SAKNAS)"
-                color = fill_red
-            else:
-                rubrik = f"{skola} (max {int(kap)})"
-                color = fill_header
+    # ===== BLOCK-LAYOUT =====
+    wb = Workbook()
+    ws = wb.active
 
-            start = ws.max_row+1
-            ws.append([rubrik])
+    fill_header = PatternFill(start_color="DDDDDD", fill_type="solid")
 
-            for c in range(1,6):
-                ws.cell(start,c).fill = color
-                ws.cell(start,c).font = Font(bold=True)
+    ws.append(["Skola","År 1","År 2","År 3","År 4"])
 
-            ws.merge_cells(start_row=start,start_column=1,end_row=start,end_column=5)
+    skol_data = {}
 
-            subset = df[df["Skola"] == skola]
+    for _, r in df.iterrows():
+        s = r["Skola"]
+        skol_data.setdefault(s, {"År 1":[],"År 2":[],"År 3":[],"År 4":[]})
 
-            for _, r in subset.iterrows():
-                ws.append([
-                    "",
-                    r.get("År 1",""),
-                    r.get("År 2",""),
-                    r.get("År 3",""),
-                    r.get("År 4","")
-                ])
+        for col in ["År 1","År 2","År 3","År 4"]:
+            if r[col]:
+                skol_data[s][col].append(r[col])
 
-                rr = ws.max_row
-                ws.cell(rr,3).fill = fill_green
-                ws.cell(rr,4).fill = fill_green
-                ws.cell(rr,5).fill = fill_dark
+    for skola in skol_data:
 
-            ws.append([])
-            ws.append([])
+        ws.append([f"{skola} (max {int(kap_map.get(skola,0))})"])
 
-        # ===== RAPPORT =====
-        ws2 = wb.create_sheet("Rapport")
-        ws2.append(["Student","Status","Kommentar","Tips","Avstånd"])
+        data = skol_data[skola]
+        max_len = max(len(v) for v in data.values())
 
-        for r in logg:
-            ws2.append([
-                r["Student"],
-                r["Status"],
-                r["Kommentar"],
-                r.get("Tips",""),
-                r.get("Avstånd","")
+        for i in range(max_len):
+            ws.append([
+                "",
+                data["År 1"][i] if i<len(data["År 1"]) else "",
+                data["År 2"][i] if i<len(data["År 2"]) else "",
+                data["År 3"][i] if i<len(data["År 3"]) else "",
+                data["År 4"][i] if i<len(data["År 4"]) else ""
             ])
 
-        file = "kull_resultat.xlsx"
-        wb.save(file)
+        ws.append([])
+        ws.append([])
 
-        with open(file,"rb") as f:
-            st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
+    ws2 = wb.create_sheet("Rapport")
+    ws2.append(["Student","Status","Kommentar","Tips","Avstånd"])
 
-        st.success("✅ Klar")
+    for r in logg:
+        ws2.append([
+            r["Student"],
+            r["Status"],
+            r["Kommentar"],
+            r["Tips"],
+            r["Avstånd"]
+        ])
 
-    except Exception as e:
-        st.error(e)
+    file = "kull_resultat.xlsx"
+    wb.save(file)
+
+    with open(file, "rb") as f:
+        st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
 
 else:
     st.info("Ladda upp filer")
