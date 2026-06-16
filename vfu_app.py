@@ -14,183 +14,183 @@ program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
 
 def get_region(text):
     t = str(text).lower()
-    if "oskarshamn" in t:
-        return "Oskarshamn"
-    if "karlskrona" in t or "ronneby" in t:
-        return "Karlskrona"
+    if "oskarshamn" in t: return "Oskarshamn"
+    if "karlskrona" in t or "ronneby" in t: return "Karlskrona"
     return "Kalmar"
 
 if system_file is not None and form_file is not None:
 
-    try:
-        # ===== SKOLOR =====
-        skolor = pd.read_excel(system_file)
-        skolor.columns = skolor.columns.str.strip()
+    skolor = pd.read_excel(system_file)
+    skolor.columns = skolor.columns.str.strip()
 
-        skolor = skolor[
-            (skolor["Kull"] == kull) &
-            (skolor["Inriktning"].str.upper() == program)
-        ].copy()
+    skolor = skolor[
+        (skolor["Kull"] == kull) &
+        (skolor["Inriktning"].str.upper() == program)
+    ].copy()
 
-        kap = dict(zip(skolor["Skolenhet"], skolor["Antal platser"]))
+    kap = dict(zip(skolor["Skolenhet"], skolor["Antal platser"]))
 
-        # ===== STUDENTER =====
-        students = pd.read_excel(form_file, sheet_name="Data")
-        students.columns = students.columns.str.strip()
+    students = pd.read_excel(form_file, sheet_name="Data")
+    students.columns = students.columns.str.strip()
 
-        fn = [c for c in students.columns if "förnamn" in c.lower()][0]
-        ln = [c for c in students.columns if "efternamn" in c.lower()][0]
-        bost = [c for c in students.columns if "bostadsort" in c.lower()][0]
+    fn = [c for c in students.columns if "förnamn" in c.lower()][0]
+    ln = [c for c in students.columns if "efternamn" in c.lower()][0]
+    bost = [c for c in students.columns if "bostadsort" in c.lower()][0]
 
-        students["Namn"] = students[fn] + " " + students[ln]
-        students["Region"] = students[bost].apply(get_region)
+    students["Namn"] = students[fn] + " " + students[ln]
+    students["Region"] = students[bost].apply(get_region)
 
-        # ===== GRUPPINDelning =====
-        group_size = 3
-        student_list = students.to_dict("records")
+    cap_used = {}
+    skol_data = {}
+    logg = []
 
-        groups = [
-            student_list[i:i+group_size]
-            for i in range(0, len(student_list), group_size)
-        ]
+    def add(skola, student, col):
+        skol_data.setdefault(skola,{})
+        skol_data[skola].setdefault(student,{"År1":"","År2":"","År3":"","År4":""})
+        skol_data[skola][student][col]=student
 
-        cap_used = {}
-        skol_data = {}
-        logg = []
+    # ===== FUNKTION SOM FÖRSÖKER PLACERA EN LISTA =====
+    def place_list(student_list):
 
-        # ===== Hjälpfunktion =====
-        def add(skola, student, col):
-            skol_data.setdefault(skola,{})
-            skol_data[skola].setdefault(student,{
-                "År1":"","År2":"","År3":"","År4":""
-            })
-            skol_data[skola][student][col]=student
+        region = student_list[0]["Region"]
+        namn_lista = [s["Namn"] for s in student_list]
 
-        # ===== PLACERA GRUPPER =====
-        for group in groups:
+        möjliga = skolor[
+            skolor["Partnerområde"].str.contains(region, case=False, na=False)
+        ]["Skolenhet"].tolist()
 
-            region = group[0]["Region"]
-            namn_lista = [s["Namn"] for s in group]
+        if len(möjliga) < 2:
+            möjliga = list(skolor["Skolenhet"])
 
-            möjliga = skolor[
-                skolor["Partnerområde"].str.contains(region, case=False, na=False)
-            ]["Skolenhet"].tolist()
+        # ===== OSKARSHAMN/KARLSKRONA =====
+        if region in ["Oskarshamn","Karlskrona"]:
 
-            if len(möjliga) < 2:
-                möjliga = list(skolor["Skolenhet"])
+            for i in range(len(möjliga)-1):
 
-            placed = False
+                A = möjliga[i]
+                B = möjliga[i+1]
 
-            # ===== OSKARSHAMN / KARLSKRONA =====
-            if region in ["Oskarshamn","Karlskrona"]:
+                if (
+                    cap_used.get((A,1),0)+len(student_list) <= kap.get(A,999) and
+                    cap_used.get((B,2),0)+len(student_list) <= kap.get(B,999) and
+                    cap_used.get((A,3),0)+len(student_list) <= kap.get(A,999) and
+                    cap_used.get((B,4),0)+len(student_list) <= kap.get(B,999)
+                ):
 
-                for i in range(len(möjliga)-1):
+                    for namn in namn_lista:
+                        add(A,namn,"År1")
+                        add(B,namn,"År2")
+                        add(A,namn,"År3")
+                        add(B,namn,"År4")
 
-                    A = möjliga[i]
-                    B = möjliga[i+1]
+                    cap_used[(A,1)] = cap_used.get((A,1),0)+len(student_list)
+                    cap_used[(B,2)] = cap_used.get((B,2),0)+len(student_list)
+                    cap_used[(A,3)] = cap_used.get((A,3),0)+len(student_list)
+                    cap_used[(B,4)] = cap_used.get((B,4),0)+len(student_list)
 
-                    if (
-                        cap_used.get((A,1),0) + len(group) <= kap.get(A,999) and
-                        cap_used.get((B,2),0) + len(group) <= kap.get(B,999) and
-                        cap_used.get((A,3),0) + len(group) <= kap.get(A,999) and
-                        cap_used.get((B,4),0) + len(group) <= kap.get(B,999)
-                    ):
+                    return True
 
-                        for namn in namn_lista:
-                            add(A,namn,"År1")
-                            add(B,namn,"År2")
-                            add(A,namn,"År3")
-                            add(B,namn,"År4")
+        # ===== KALMAR =====
+        else:
 
-                        cap_used[(A,1)] = cap_used.get((A,1),0) + len(group)
-                        cap_used[(B,2)] = cap_used.get((B,2),0) + len(group)
-                        cap_used[(A,3)] = cap_used.get((A,3),0) + len(group)
-                        cap_used[(B,4)] = cap_used.get((B,4),0) + len(group)
+            for i in range(len(möjliga)-2):
 
-                        placed = True
-                        break
+                A = möjliga[i]
+                B = möjliga[i+1]
+                C = möjliga[i+2]
 
-            # ===== KALMAR =====
-            else:
+                if (
+                    cap_used.get((A,1),0)+len(student_list) <= kap.get(A,999) and
+                    cap_used.get((B,2),0)+len(student_list) <= kap.get(B,999) and
+                    cap_used.get((B,3),0)+len(student_list) <= kap.get(B,999) and
+                    cap_used.get((C,4),0)+len(student_list) <= kap.get(C,999)
+                ):
 
-                for i in range(len(möjliga)-2):
+                    for namn in namn_lista:
+                        add(A,namn,"År1")
+                        add(B,namn,"År2")
+                        add(B,namn,"År3")
+                        add(C,namn,"År4")
 
-                    A = möjliga[i]
-                    B = möjliga[i+1]
-                    C = möjliga[i+2]
+                    cap_used[(A,1)] = cap_used.get((A,1),0)+len(student_list)
+                    cap_used[(B,2)] = cap_used.get((B,2),0)+len(student_list)
+                    cap_used[(B,3)] = cap_used.get((B,3),0)+len(student_list)
+                    cap_used[(C,4)] = cap_used.get((C,4),0)+len(student_list)
 
-                    if (
-                        cap_used.get((A,1),0) + len(group) <= kap.get(A,999) and
-                        cap_used.get((B,2),0) + len(group) <= kap.get(B,999) and
-                        cap_used.get((B,3),0) + len(group) <= kap.get(B,999) and
-                        cap_used.get((C,4),0) + len(group) <= kap.get(C,999)
-                    ):
+                    return True
 
-                        for namn in namn_lista:
-                            add(A,namn,"År1")
-                            add(B,namn,"År2")
-                            add(B,namn,"År3")
-                            add(C,namn,"År4")
+        return False
 
-                        cap_used[(A,1)] = cap_used.get((A,1),0) + len(group)
-                        cap_used[(B,2)] = cap_used.get((B,2),0) + len(group)
-                        cap_used[(B,3)] = cap_used.get((B,3),0) + len(group)
-                        cap_used[(C,4)] = cap_used.get((C,4),0) + len(group)
+    # ===== DYNAMISK GRUPPLOGIK =====
+    student_list = students.to_dict("records")
 
-                        placed = True
-                        break
+    i = 0
+    while i < len(student_list):
 
-            # ===== FALLBACK (split grupp) =====
-            if not placed:
-                for s in group:
-                    logg.append({"Student":s["Namn"],"Status":"Får ej plats"})
-            else:
-                for s in group:
-                    logg.append({"Student":s["Namn"],"Status":"OK"})
+        # börja med grupp 3
+        group = student_list[i:i+3]
 
-        # ===== EXCEL =====
-        wb = Workbook()
-        ws = wb.active
+        if place_list(group):
+            for s in group:
+                logg.append({"Student":s["Namn"],"Status":"OK"})
+            i += 3
+            continue
 
-        ws.column_dimensions["A"].width = 40
-        for c in ["B","C","D","E"]:
-            ws.column_dimensions[c].width = 25
+        # fallback grupp 2
+        group = student_list[i:i+2]
 
-        fill = PatternFill(start_color="DDDDDD", fill_type="solid")
+        if place_list(group):
+            for s in group:
+                logg.append({"Student":s["Namn"],"Status":"OK"})
+            i += 2
+            continue
 
-        ws.append(["Skola","År1","År2","År3","År4"])
+        # fallback singel
+        group = [student_list[i]]
 
-        for skola in sorted(skol_data):
+        if place_list(group):
+            logg.append({"Student":group[0]["Namn"],"Status":"OK"})
+        else:
+            logg.append({"Student":group[0]["Namn"],"Status":"Får ej plats"})
 
-            ws.append([f"{skola} (max {int(kap.get(skola,0))})"])
-            r = ws.max_row
+        i += 1
 
-            for c in range(1,6):
-                ws.cell(r,c).fill = fill
-                ws.cell(r,c).font = Font(bold=True)
+    # ===== EXCEL =====
+    wb = Workbook()
+    ws = wb.active
 
-            ws.merge_cells(start_row=r,start_column=1,end_row=r,end_column=5)
+    ws.column_dimensions["A"].width = 40
+    for c in ["B","C","D","E"]:
+        ws.column_dimensions[c].width = 25
 
-            for student, years in skol_data[skola].items():
-                ws.append(["", years["År1"], years["År2"], years["År3"], years["År4"]])
+    fill = PatternFill(start_color="DDDDDD", fill_type="solid")
 
-            ws.append([])
+    ws.append(["Skola","År1","År2","År3","År4"])
 
-        # ===== RAPPORT =====
-        ws2 = wb.create_sheet("Rapport")
-        ws2.append(["Student","Status"])
+    for skola in sorted(skol_data):
 
-        for r in logg:
-            ws2.append([r["Student"], r["Status"]])
+        ws.append([f"{skola} (max {int(kap.get(skola,0))})"])
+        r = ws.max_row
 
-        file = "kull_resultat.xlsx"
-        wb.save(file)
+        for c in range(1,6):
+            ws.cell(r,c).fill = fill
+            ws.cell(r,c).font = Font(bold=True)
 
-        with open(file, "rb") as f:
-            st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
+        ws.merge_cells(start_row=r,start_column=1,end_row=r,end_column=5)
 
-    except Exception as e:
-        st.error(f"Fel: {e}")
+        for student, years in skol_data[skola].items():
+            ws.append(["", years["År1"], years["År2"], years["År3"], years["År4"]])
 
-else:
-    st.info("Ladda upp båda filer")
+        ws.append([])
+
+    ws2 = wb.create_sheet("Rapport")
+    ws2.append(["Student","Status"])
+
+    for r in logg:
+        ws2.append([r["Student"], r["Status"]])
+
+    file = "kull_resultat.xlsx"
+    wb.save(file)
+
+    with open(file, "rb") as f:
+        st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
