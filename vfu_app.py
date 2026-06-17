@@ -1,6 +1,5 @@
 
-import streamlit as st
-import pandas as pd
+import streamlit as stimport streamlit pandas as pd
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
@@ -27,7 +26,6 @@ def get_region(text):
 
 if system_file and form_file:
 
-    # ===== SKOLOR =====
     skolor = pd.read_excel(system_file)
     skolor.columns = skolor.columns.str.strip()
 
@@ -44,7 +42,6 @@ if system_file and form_file:
         if pd.notna(r["Antal platser"])
     }
 
-    # ===== STUDENTER =====
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
 
@@ -113,16 +110,45 @@ if system_file and form_file:
             return True
 
 
+        # ✅ FÖRBÄTTRAD FALLBACK
         def fallback_place(student):
+
+            used_schools = []
+
             for year in ["År1","År2","År3","År4"]:
+
+                placed = False
+
+                # försök nya skolor först
                 for sk in skolor_r:
+                    if sk in used_schools:
+                        continue
+
                     if usage[sk][year] < kapasitet[sk]:
                         for r in rows_r:
                             if r["Skola"] == sk and r[year] == "":
                                 r[year] = student
                                 usage[sk][year] += 1
+                                used_schools.append(sk)
+                                placed = True
                                 break
+                    if placed:
                         break
+
+                # fallback till allt
+                if not placed:
+                    for sk in skolor_r:
+                        if usage[sk][year] < kapasitet[sk]:
+                            for r in rows_r:
+                                if r["Skola"] == sk and r[year] == "":
+                                    r[year] = student
+                                    usage[sk][year] += 1
+                                    used_schools.append(sk)
+                                    placed = True
+                                    break
+                        if placed:
+                            break
+
 
         for i, student in enumerate(stud_r):
 
@@ -144,7 +170,6 @@ if system_file and form_file:
     # ===== EXCEL =====
     wb = Workbook()
     ws = wb.active
-    ws.title = "Placeringar"
 
     bold = Font(bold=True)
     header_font = Font(bold=True, size=14)
@@ -163,10 +188,9 @@ if system_file and form_file:
     ws.append(["Skola","År1","År2","År3","År4"])
 
     for c in range(1,6):
-        cell = ws.cell(1,c)
-        cell.fill = fills["Header"]
-        cell.font = bold
-        cell.alignment = center
+        ws.cell(1,c).fill = fills["Header"]
+        ws.cell(1,c).font = bold
+        ws.cell(1,c).alignment = center
 
     row_idx = 2
 
@@ -186,9 +210,7 @@ if system_file and form_file:
         ws.append([])
         row_idx += 1
 
-        skolor_region = skolor[skolor["Region"] == region]["Skolenhet"]
-
-        for skola in skolor_region:
+        for skola in skolor[skolor["Region"] == region]["Skolenhet"]:
 
             ws.append([f"{skola} (max {kap[skola]})"])
 
@@ -210,6 +232,7 @@ if system_file and form_file:
             ws.append([])
             row_idx += 1
 
+    # kolumnbredd
     for col in ws.columns:
         max_len = 0
         col_letter = col[0].column_letter
@@ -220,7 +243,7 @@ if system_file and form_file:
 
         ws.column_dimensions[col_letter].width = max(max_len + 4, 14)
 
-    # ===== RAPPORT =====
+    # rapport
     ws2 = wb.create_sheet("Rapport")
     ws2.append(["Student","Status"])
 
