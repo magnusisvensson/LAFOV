@@ -1,8 +1,8 @@
+
 import streamlit as st
-import streamlit as pd
+import pandas as pd
 
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment
 
 
 # =========================
@@ -14,7 +14,7 @@ system_file = st.file_uploader("1. Översiktsfil", type=["xlsx"])
 form_file = st.file_uploader("2. Formulärsvar", type=["xlsx"])
 
 kull = st.number_input("Kull", value=26)
-program = st.selectbox("Program", ["LAFOV", "LAGRV", "LGFRI"])
+program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
 
 
 # =========================
@@ -34,17 +34,17 @@ if system_file and form_file:
     # =========================
     # SKOLOR
     # =========================
-    skolor = pd.read_excel(system_file)
+    skolor = pd.read_excel(system_file, engine="openpyxl")
     skolor.columns = skolor.columns.str.strip()
 
     skolor = skolor[
         (skolor["Kull"] == kull) &
         (skolor["Inriktning"].str.upper() == program)
-    ].copy()
+    ]
 
     skolor["Region"] = skolor["Partnerområde"].apply(get_region)
 
-    # Kapacitet (inkl ?)
+    # Kapacitet (säkert)
     kap = {}
     for _, r in skolor.iterrows():
         try:
@@ -55,7 +55,7 @@ if system_file and form_file:
     # =========================
     # STUDENTER
     # =========================
-    students = pd.read_excel(form_file, sheet_name="Data")
+    students = pd.read_excel(form_file, sheet_name="Data", engine="openpyxl")
     students.columns = students.columns.str.strip()
 
     fn = [c for c in students.columns if "förnamn" in c.lower()][0]
@@ -76,7 +76,6 @@ if system_file and form_file:
     rows = []
     for _, r in skolor.iterrows():
         antal = kap[r["Skolenhet"]]
-
         for _ in range(antal):
             rows.append({
                 "Skola": r["Skolenhet"],
@@ -90,13 +89,13 @@ if system_file and form_file:
     # =========================
     # PLACERING
     # =========================
-    for region in ["Kalmar", "Oskarshamn", "Karlskrona"]:
+    for region in ["Kalmar","Oskarshamn","Karlskrona"]:
 
         rows_r = [r for r in rows if r["Region"] == region]
         stud_r = list(students[students["Region"] == region]["Namn"])
         skolor_r = list(dict.fromkeys([r["Skola"] for r in rows_r]))
 
-        usage = {sk: {"År1": 0, "År2": 0, "År3": 0, "År4": 0} for sk in skolor_r}
+        usage = {sk: {"År1":0,"År2":0,"År3":0,"År4":0} for sk in skolor_r}
 
         def place(student, year, skola):
             for r in rows_r:
@@ -115,7 +114,7 @@ if system_file and form_file:
             # ÅR1
             place(student, "År1", A)
 
-            # ÅR2 & ÅR3 (alltid samma)
+            # ÅR2 + ÅR3 (samma)
             for sk in [B] + skolor_r:
                 if usage[sk]["År2"] < kap[sk] and usage[sk]["År3"] < kap[sk]:
                     if place(student, "År2", sk):
@@ -152,13 +151,19 @@ if system_file and form_file:
     ws = wb.active
     ws.title = "Placeringar"
 
-    ws.append(["Skola", "År1", "År2", "År3", "År4"])
+    ws.append(["Skola","År1","År2","År3","År4"])
 
     for r in rows:
-        ws.append([r["Skola"], r["År1"], r["År2"], r["År3"], r["År4"]])
+        ws.append([
+            r["Skola"],
+            r["År1"],
+            r["År2"],
+            r["År3"],
+            r["År4"]
+        ])
 
     # =========================
-    # BLAD 2 (NYTT)
+    # BLAD 2
     # =========================
     ws2 = wb.create_sheet("Översikt studenter")
 
@@ -179,7 +184,7 @@ if system_file and form_file:
 
         p1 = ""
         p2 = ""
-        p4 = ""
+        p3 = ""
 
         for r in rows:
             if r["År1"] == namn:
@@ -187,9 +192,9 @@ if system_file and form_file:
             if r["År2"] == namn:
                 p2 = r["Skola"]
             if r["År4"] == namn:
-                p4 = r["Skola"]
+                p3 = r["Skola"]
 
-        ws2.append([namn, bostad, alt, p1, p2, p4])
+        ws2.append([namn, bostad, alt, p1, p2, p3])
 
     # =========================
     # EXPORT
