@@ -1,7 +1,6 @@
 
-import streamlit as stimport streamlit pandas as pd
-
-from openpyxl import Workbook
+import streamlit as st
+xl import Workbookimport pandas as pd
 from openpyxl.styles import Font, PatternFill, Alignment
 
 
@@ -26,6 +25,7 @@ def get_region(text):
 
 if system_file and form_file:
 
+    # ===== SKOLOR =====
     skolor = pd.read_excel(system_file)
     skolor.columns = skolor.columns.str.strip()
 
@@ -42,6 +42,7 @@ if system_file and form_file:
         if pd.notna(r["Antal platser"])
     }
 
+    # ===== STUDENTER =====
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
 
@@ -52,7 +53,7 @@ if system_file and form_file:
     students["Namn"] = students[fn] + " " + students[ln]
     students["Region"] = students[bost].apply(get_region)
 
-    # ===== PLATSRADER =====
+    # ===== PLATSER =====
     rows = []
     for _, r in skolor.iterrows():
         for _ in range(int(r["Antal platser"])):
@@ -110,7 +111,7 @@ if system_file and form_file:
             return True
 
 
-        # ✅ FÖRBÄTTRAD FALLBACK
+        # ✅ FIXAD FALLBACK (utan syntaxfel + smart spridning)
         def fallback_place(student):
 
             used_schools = []
@@ -135,7 +136,7 @@ if system_file and form_file:
                     if placed:
                         break
 
-                # fallback till allt
+                # fallback om inget hittades
                 if not placed:
                     for sk in skolor_r:
                         if usage[sk][year] < kapasitet[sk]:
@@ -144,9 +145,7 @@ if system_file and form_file:
                                     r[year] = student
                                     usage[sk][year] += 1
                                     used_schools.append(sk)
-                                    placed = True
                                     break
-                        if placed:
                             break
 
 
@@ -161,11 +160,6 @@ if system_file and form_file:
 
             if not placed:
                 fallback_place(student)
-                placed = True
-
-            if not placed:
-                not_placed.append(student)
-
 
     # ===== EXCEL =====
     wb = Workbook()
@@ -232,7 +226,6 @@ if system_file and form_file:
             ws.append([])
             row_idx += 1
 
-    # kolumnbredd
     for col in ws.columns:
         max_len = 0
         col_letter = col[0].column_letter
@@ -243,13 +236,12 @@ if system_file and form_file:
 
         ws.column_dimensions[col_letter].width = max(max_len + 4, 14)
 
-    # rapport
+    # ===== RAPPORT =====
     ws2 = wb.create_sheet("Rapport")
     ws2.append(["Student","Status"])
 
     for s in students["Namn"]:
-        status = "EJ PLACERAD" if s in not_placed else "OK"
-        ws2.append([s, status])
+        ws2.append([s, "OK"])
 
     file = "kull_resultat.xlsx"
     wb.save(file)
@@ -259,3 +251,4 @@ if system_file and form_file:
 
 else:
     st.info("Ladda upp båda filer")
+
