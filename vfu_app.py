@@ -37,7 +37,7 @@ if system_file and form_file:
 
     skolor["Region"] = skolor["Partnerområde"].apply(get_region)
 
-    # kap (med ?)
+    # kap med ?
     kap = {}
     for _, r in skolor.iterrows():
         try:
@@ -95,6 +95,7 @@ if system_file and form_file:
                     return True
             return False
 
+
         for i, student in enumerate(stud_r):
 
             A = skolor_r[i % len(skolor_r)]
@@ -104,18 +105,44 @@ if system_file and form_file:
             # År1
             place(student, "År1", A)
 
-            # ✅ År2 + År3 samma
+            # ✅ År2 + År3 SAMMA
             placed = False
             for sk in [B] + skolor_r:
-                if usage[sk]["År2"] < kapasitet[sk] and usage[sk]["År3"] < kapasitet[sk]:
+                if (
+                    usage[sk]["År2"] < kapasitet[sk] and
+                    usage[sk]["År3"] < kapasitet[sk]
+                ):
                     ok2 = place(student, "År2", sk)
                     ok3 = place(student, "År3", sk)
                     if ok2 and ok3:
                         placed = True
                         break
 
-            # År4
-            place(student, "År4", C)
+            # ✅ År4 – UNDVIK SAMMA SKOLA
+            used = set()
+            for r in rows_r:
+                for y in ["År1","År2","År3"]:
+                    if r[y] == student:
+                        used.add(r["Skola"])
+
+            placed4 = False
+
+            # försök NYA skolor först
+            for sk in skolor_r:
+                if sk in used:
+                    continue
+
+                if usage[sk]["År4"] < kapasitet[sk]:
+                    if place(student, "År4", sk):
+                        placed4 = True
+                        break
+
+            # fallback
+            if not placed4:
+                for sk in skolor_r:
+                    if usage[sk]["År4"] < kapasitet[sk]:
+                        place(student, "År4", sk)
+                        break
 
     # ===== EXCEL =====
     wb = Workbook()
@@ -126,15 +153,15 @@ if system_file and form_file:
     center = Alignment(horizontal="center")
     left = Alignment(horizontal="left")
 
-    fill_region = {
+    fills = {
         "Kalmar": PatternFill("solid", fgColor="D9EAF7"),
         "Oskarshamn": PatternFill("solid", fgColor="DFF5DF"),
         "Karlskrona": PatternFill("solid", fgColor="FFF4CC"),
+        "Skola": PatternFill("solid", fgColor="E7E7E7"),
+        "Header": PatternFill("solid", fgColor="CCCCCC"),
+        "Warning": PatternFill("solid", fgColor="FFC7CE"),
+        "WarningLight": PatternFill("solid", fgColor="FFECEC"),
     }
-
-    fill_skola = PatternFill("solid", fgColor="E7E7E7")
-    fill_warn = PatternFill("solid", fgColor="FFC7CE")
-    fill_warn_light = PatternFill("solid", fgColor="FFECEC")
 
     ws.append(["Skola","År1","År2","År3","År4"])
 
@@ -148,7 +175,7 @@ if system_file and form_file:
         ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=5)
         cell = ws.cell(row_idx,1)
         cell.value = region.upper()
-        cell.fill = fill_region[region]
+        cell.fill = fills[region]
         cell.font = header_font
         cell.alignment = center
         row_idx += 1
@@ -159,16 +186,17 @@ if system_file and form_file:
         for skola in skolor[skolor["Region"] == region]["Skolenhet"]:
 
             ws.append([f"{skola} (max {kap[skola]})"])
+
             is_unknown = kap[skola] == "?"
 
             for c in range(1,6):
                 cell = ws.cell(row_idx,c)
+                cell.font = bold
+
                 if is_unknown:
-                    cell.fill = fill_warn
-                    cell.font = Font(bold=True, color="9C0006")
+                    cell.fill = fills["Warning"]
                 else:
-                    cell.fill = fill_skola
-                    cell.font = bold
+                    cell.fill = fills["Skola"]
 
             row_idx += 1
 
@@ -179,8 +207,9 @@ if system_file and form_file:
                     for c in range(2,6):
                         cell = ws.cell(row_idx,c)
                         cell.alignment = left
+
                         if is_unknown:
-                            cell.fill = fill_warn_light
+                            cell.fill = fills["WarningLight"]
 
                     row_idx += 1
 
