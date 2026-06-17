@@ -45,9 +45,6 @@ if system_file and form_file:
         if k > 0:
             kap[r["Skolenhet"]] = k
 
-    skol_lista = list(kap.keys())
-
-
     # ===== STUDENTER =====
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
@@ -59,8 +56,7 @@ if system_file and form_file:
     students["Namn"] = students[fn] + " " + students[ln]
     students["Region"] = students[bost].apply(get_region)
 
-
-    # ===== SKAPA PLATS-RADER =====
+    # ===== SKAPA PLATSRADER =====
     rows = []
 
     for _, r in skolor.iterrows():
@@ -78,7 +74,6 @@ if system_file and form_file:
                 "År4": ""
             })
 
-
     not_placed = []
 
     # ===== FÖRDELA PER REGION =====
@@ -92,39 +87,40 @@ if system_file and form_file:
             not_placed += stud_r
             continue
 
-        # ✅ SPRID STUDENTER ÖVER SKOLOR
-        allocation = []
+        def rotate(lst, n):
+            return lst[n:] + lst[:n]
+
+        # ✅ ABAB-FÖRDELNING (KRITISK FIX)
+        names_by_school = []
         i = 0
 
         while i < len(stud_r):
             for skola in skolor_r:
                 if i >= len(stud_r):
                     break
-                allocation.append((stud_r[i], skola))
+                names_by_school.append((stud_r[i], skola))
                 i += 1
 
-        # bygg lista för år1
-        stud_order = [a[0] for a in allocation]
+        # ✅ FÖRDELA KORREKT PER SKOLA
+        for skola in skolor_r:
 
-        # rotation
-        def rotate(lst, n):
-            return lst[n:] + lst[:n]
+            rows_skola = [r for r in rows_r if r["Skola"] == skola]
+            stud_skola = [s for (s, sk) in names_by_school if sk == skola]
 
-        names1 = stud_order[:len(rows_r)]
-        names2 = rotate(names1, 1)
-        names4 = rotate(names1, 2)
+            names1 = stud_skola[:len(rows_skola)]
+            names2 = rotate(names1, 1)
+            names4 = rotate(names1, 2)
 
-        for i, row in enumerate(rows_r):
+            for i, row in enumerate(rows_skola):
+                if i < len(names1):
+                    row["År1"] = names1[i]
+                    row["År2"] = names2[i]
+                    row["År3"] = names2[i]
+                    row["År4"] = names4[i]
 
-            if i < len(names1):
-                row["År1"] = names1[i]
-                row["År2"] = names2[i]
-                row["År3"] = names2[i]
-                row["År4"] = names4[i]
-
-        if len(stud_r) > len(rows_r):
-            not_placed += stud_r[len(rows_r):]
-
+        # ej placerade
+        if len(stud_r) > len(names_by_school):
+            not_placed += stud_r[len(names_by_school):]
 
     # ===== EXCEL =====
     wb = Workbook()
@@ -140,14 +136,14 @@ if system_file and form_file:
         ws.append([f"--- {region.upper()} ---"])
         ws.cell(ws.max_row,1).font = header_font
 
-        skolor_region = skolor[skolor["Region"]==region]["Skolenhet"]
+        skolor_region = skolor[skolor["Region"] == region]["Skolenhet"]
 
         for skola in skolor_region:
 
-            max_p = kap.get(skola,0)
+            max_p = kap.get(skola, 0)
             ws.append([f"{skola} (max {max_p})"])
 
-            rows_s = [r for r in rows if r["Skola"]==skola]
+            rows_s = [r for r in rows if r["Skola"] == skola]
 
             for r in rows_s:
                 ws.append(["", r["År1"], r["År2"], r["År3"], r["År4"]])
@@ -155,7 +151,6 @@ if system_file and form_file:
             ws.append([])
 
         ws.append([])
-
 
     # ===== RAPPORT =====
     ws2 = wb.create_sheet("Rapport")
@@ -166,7 +161,6 @@ if system_file and form_file:
             ws2.append([s,"EJ PLACERAD"])
         else:
             ws2.append([s,"OK"])
-
 
     file = "kull_resultat.xlsx"
     wb.save(file)
