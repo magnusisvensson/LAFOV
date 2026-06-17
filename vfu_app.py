@@ -38,7 +38,6 @@ if system_file and form_file:
         (skolor["Inriktning"].str.upper() == program)
     ].copy()
 
-    # robust kapacitet
     kap = {}
     for _, r in skolor.iterrows():
         try:
@@ -55,11 +54,6 @@ if system_file and form_file:
     else:
         skolor["Region"] = "Kalmar"
 
-    def school_sort_key(s):
-        region = skolor.loc[skolor["Skolenhet"]==s,"Region"].values[0]
-        order = {"Kalmar":0,"Oskarshamn":1,"Karlskrona":2}
-        return (order.get(region,3), s)
-
     # ===== STUDENTER =====
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
@@ -73,67 +67,41 @@ if system_file and form_file:
 
     student_names = list(students["Namn"])
 
-    # ===== KAPACITET TRACKING =====
-    cap_used = {}
-
-    def has_space(s,y):
-        return cap_used.get((s,y),0) < kap.get(s,0)
-
-    def use(s,y):
-        cap_used[(s,y)] = cap_used.get((s,y),0)+1
-
-    # ===== ÅR1 =====
+    # ===== ÅR1 (FYLL) =====
     year = {1:{},2:{},3:{},4:{}}
 
-    i = 0
+    idx = 0
     for skola, max_p in kap.items():
-        for _ in range(int(max_p)):
-            if i >= len(student_names):
+        for _ in range(max_p):
+            if idx >= len(student_names):
                 break
+            year[1][student_names[idx]] = skola
+            idx += 1
 
-            s = student_names[i]
-            year[1][s] = skola
-            use(skola,1)
-            i += 1
 
-    # ===== ÅR2 =====
+    # ===== HJÄLP: hitta index i skol_lista =====
+    def next_school(current, step=1):
+        i = skol_lista.index(current)
+        return skol_lista[(i + step) % len(skol_lista)]
+
+
+    # ===== ÅR2 (B) =====
     for s in student_names:
-
-        prev = year[1][s]
-
-        if has_space(prev,2):
-            year[2][s] = prev
-            use(prev,2)
-        else:
-            for sk in skol_lista:
-                if has_space(sk,2):
-                    year[2][s] = sk
-                    use(sk,2)
-                    break
+        A = year[1][s]
+        B = next_school(A, 1)
+        year[2][s] = B
 
     # ===== ÅR3 = ÅR2 =====
     year[3] = year[2].copy()
 
-    # ===== ÅR4 =====
+    # ===== ÅR4 (C) =====
     for s in student_names:
+        B = year[2][s]
+        C = next_school(B, 1)
+        year[4][s] = C
 
-        prev = year[2][s]
-        placed = False
 
-        # försök byta skola
-        for sk in skol_lista:
-            if sk != prev and has_space(sk,4):
-                year[4][s] = sk
-                use(sk,4)
-                placed = True
-                break
-
-        # annars stanna kvar
-        if not placed:
-            year[4][s] = prev
-            use(prev,4)
-
-    # ===== BYGG SKOLDATA =====
+    # ===== BYGG SKOLVY =====
     school_data = {}
 
     for s in student_names:
@@ -142,11 +110,12 @@ if system_file and form_file:
             sk = year[yr][s]
 
             school_data.setdefault(sk,{})
-            school_data[sk].setdefault(s,
-                {"År1":"","År2":"","År3":"","År4":""}
-            )
+            school_data[sk].setdefault(s,{
+                "År1":"","År2":"","År3":"","År4":""
+            })
 
             school_data[sk][s][y] = s
+
 
     # ===== EXCEL =====
     wb = Workbook()
@@ -156,9 +125,7 @@ if system_file and form_file:
 
     ws.append(["Skola","År1","År2","År3","År4"])
 
-    for skola in sorted(kap.keys(), key=school_sort_key):
-
-        max_p = int(kap.get(skola,0))
+    for skola, max_p in kap.items():
 
         ws.append([f"{skola} (max {max_p})"])
         r = ws.max_row
@@ -170,20 +137,21 @@ if system_file and form_file:
         ws.merge_cells(start_row=r,start_column=1,end_row=r,end_column=5)
 
         rows=[{"År1":"","År2":"","År3":"","År4":""}
-              for _ in range(max_p)]
+              for _ in range(int(max_p))]
 
-        i=0
+        i = 0
         if skola in school_data:
             for student,data in school_data[skola].items():
-                if i>=max_p:
+                if i >= max_p:
                     break
-                rows[i]=data
-                i+=1
+                rows[i] = data
+                i += 1
 
         for row in rows:
             ws.append(["",row["År1"],row["År2"],row["År3"],row["År4"]])
 
         ws.append([])
+
 
     # ===== RAPPORT =====
     ws2 = wb.create_sheet("Rapport")
@@ -197,34 +165,22 @@ if system_file and form_file:
 
         skolor_student = [year[y][s] for y in [1,2,3,4]]
 
-        # OKÄND ORT
         if student_region == "OKÄND":
             status = "OBS - OKÄND ORT - LÅNG PENDLING"
-
         else:
-            long_commute = False
+            long_commute = any(
+                skolor.loc[skolor["Skolenhet"]==sk,"Region"].values[0]
+                != student_region
+                for sk in skolor_student
+            )
 
-            for skola in skolor_student:
-                sk_region = skolor.loc[
-                    skolor["Skolenhet"] == skola, "Region"
-                ].values[0]
-
-                if sk_region != student_region:
-                    long_commute = True
-                    break
-
-            if long_commute:
-                status = "OK - OBS LÅNG PENDLING"
-            else:
-                status = "OK"
+            status = "OK - OBS LÅNG PENDLING" if long_commute else "OK"
 
         ws2.append([s, status])
+
 
     file = "kull_resultat.xlsx"
     wb.save(file)
 
     with open(file,"rb") as f:
         st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
-
-else:
-    st.info("Ladda upp båda filer")
