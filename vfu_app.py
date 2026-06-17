@@ -12,6 +12,16 @@ kull = st.number_input("Kull", value=26)
 program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
 
 
+# ===== REGION =====
+def get_region(text):
+    t = str(text).lower()
+    if "oskarshamn" in t:
+        return "Oskarshamn"
+    if "karlskrona" in t or "ronneby" in t:
+        return "Karlskrona"
+    return "Kalmar"
+
+
 if system_file and form_file:
 
     # ===== SKOLOR =====
@@ -21,26 +31,16 @@ if system_file and form_file:
     skolor = skolor[
         (skolor["Kull"] == kull) &
         (skolor["Inriktning"].str.upper() == program)
-    ]
+    ].copy()
 
-    skolor = skolor[
-        ~skolor["Partnerområde"].str.lower().str.contains(
-            "karlskrona|oskarshamn|ronneby", na=False)
-    ]
+    skolor["Region"] = skolor["Partnerområde"].apply(get_region)
 
-    kap = {}
-    skol_lista = []
-
-    for _, r in skolor.iterrows():
-        try:
-            k = int(r["Antal platser"])
-        except:
-            k = 0
-
-        if k > 0:
-            kap[r["Skolenhet"]] = k
-            skol_lista.append(r["Skolenhet"])
-
+    # kapacitet
+    kap = {
+        r["Skolenhet"]: int(r["Antal platser"])
+        for _, r in skolor.iterrows()
+        if pd.notna(r["Antal platser"]) and int(r["Antal platser"]) > 0
+    }
 
     # ===== STUDENTER =====
     students = pd.read_excel(form_file, sheet_name="Data")
@@ -48,62 +48,57 @@ if system_file and form_file:
 
     fn = [c for c in students.columns if "förnamn" in c.lower()][0]
     ln = [c for c in students.columns if "efternamn" in c.lower()][0]
+    bost = [c for c in students.columns if "bostadsort" in c.lower()][0]
 
     students["Namn"] = students[fn] + " " + students[ln]
+    students["Region"] = students[bost].apply(get_region)
+
     student_names = list(students["Namn"])
 
 
-    # ===== KAPACITETS-KOLL =====
-    usage = {y: {s:0 for s in skol_lista} for y in [1,2,3,4]}
-
-    def place(student, year, preferred):
-
-        for offset in range(len(skol_lista)):
-            skola = skol_lista[(preferred + offset) % len(skol_lista)]
-
-            if usage[year][skola] < kap[skola]:
-                usage[year][skola] += 1
-                return skola
-
-        return None
-
-
-    # ===== PLACERING =====
+    # ===== FÖRDELA PER REGION =====
     year = {1:{},2:{},3:{},4:{}}
-
     not_placed = []
 
-    for idx, s in enumerate(student_names):
+    regions = ["Kalmar","Karlskrona","Oskarshamn"]
 
-        # År1
-        A = place(s, 1, idx % len(skol_lista))
-        if not A:
-            not_placed.append(s)
-            continue
+    for region in regions:
 
-        # År2
-        B = place(s, 2, (skol_lista.index(A)+1))
-        if not B:
-            not_placed.append(s)
-            continue
+        skolor_r = skolor[skolor["Region"] == region]
+        studenter_r = students[students["Region"] == region]
 
-        # År3
-        if usage[3][B] < kap[B]:
-            C2 = B
-            usage[3][B] += 1
-        else:
-            C2 = place(s, 3, skol_lista.index(B))
+        skole_list = list(skolor_r["Skolenhet"])
+        kap_r = {
+            s: kap[s] for s in skole_list if s in kap
+        }
 
-        # År4
-        C = place(s, 4, (skol_lista.index(B)+1))
-        if not C:
-            not_placed.append(s)
-            continue
+        # bygg slots
+        slots = []
+        for sk in skole_list:
+            slots += [sk] * kap_r.get(sk, 0)
 
-        year[1][s] = A
-        year[2][s] = B
-        year[3][s] = C2
-        year[4][s] = C
+        def rotate(lst, n):
+            return lst[n:] + lst[:n]
+
+        slots_y1 = slots.copy()
+        slots_y2 = rotate(slots, 1)
+        slots_y4 = rotate(slots, 2)
+
+        for i, (_, row) in enumerate(studenter_r.iterrows()):
+
+            s = row["Namn"]
+
+            if i < len(slots):
+                year[1][s] = slots_y1[i]
+                year[2][s] = slots_y2[i]
+                year[3][s] = slots_y2[i]
+                year[4][s] = slots_y4[i]
+            else:
+                year[1][s] = None
+                year[2][s] = None
+                year[3][s] = None
+                year[4][s] = None
+                not_placed.append(s)
 
 
     # ===== EXCEL =====
@@ -113,9 +108,12 @@ if system_file and form_file:
 
     ws.append(["Skola","År1","År2","År3","År4"])
 
-    for skola in skol_lista:
+    skole_all = list(kap.keys())
 
-        ws.append([f"{skola} (max {kap[skola]})"])
+    for skola in skole_all:
+
+        max_p = kap.get(skola, 0)
+        ws.append([f"{skola} (max {max_p})"])
 
         year_lists = {f"År{i}":[] for i in [1,2,3,4]}
 
@@ -124,7 +122,7 @@ if system_file and form_file:
                 if year[y].get(s) == skola:
                     year_lists[f"År{y}"].append(s)
 
-        for i in range(kap[skola]):
+        for i in range(max_p):
             row = []
             for y in ["År1","År2","År3","År4"]:
                 row.append(year_lists[y][i] if i < len(year_lists[y]) else "")
@@ -148,4 +146,7 @@ if system_file and form_file:
     wb.save(file)
 
     with open(file,"rb") as f:
-        st.download_button("⬇️ Ladda ner", f, file_name=file)
+        st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
+
+else:
+    st.info("Ladda upp båda filer")
