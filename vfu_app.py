@@ -1,4 +1,3 @@
-
 import streamlit as stimport streamlit as Formulärsvar", type=["xlsx"])
 
 kull = st.number_input("Kull", value=26)
