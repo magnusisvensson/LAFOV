@@ -8,23 +8,32 @@ st.title("VFU-placeringssystem")
 system_file = st.file_uploader("1. Översiktsfil", type=["xlsx"])
 form_file = st.file_uploader("2. Formulärsvar", type=["xlsx"])
 
+kull = st.number_input("Använd skolor planerade för kull:", value=26)
+program = st.selectbox("Inom program:", ["LAFOV","LAGRV","LGFRI"])
+
 
 if system_file and form_file:
 
-    # ===== LÄS SKOLOR =====
+    # ===== SKOLOR =====
     skolor = pd.read_excel(system_file)
     skolor.columns = skolor.columns.str.strip()
+
+    # ✅ FILTRERA KULL + PROGRAM
+    skolor = skolor[
+        (skolor["Kull"] == kull) &
+        (skolor["Inriktning"].str.upper() == program)
+    ].copy()
 
     # ✅ TA BORT Karlskrona & Oskarshamn
     skolor = skolor[
         ~skolor["Partnerområde"].str.lower().str.contains(
             "karlskrona|ronneby|oskarshamn", na=False
         )
-    ].copy()
+    ]
 
     skol_lista = list(skolor["Skolenhet"])
 
-    # ===== LÄS STUDENTER =====
+    # ===== STUDENTER =====
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
 
@@ -32,17 +41,16 @@ if system_file and form_file:
     ln = [c for c in students.columns if "efternamn" in c.lower()][0]
 
     students["Namn"] = students[fn] + " " + students[ln]
-
     student_names = list(students["Namn"])
 
-    # ===== GRUPPER (2 och 2) =====
+    # ===== GRUPPER (2-2) =====
     grupper = []
     i = 0
     while i < len(student_names):
         grupper.append(student_names[i:i+2])
         i += 2
 
-    # ===== ROTATION =====
+    # ===== ROTATION (A-B-B-C) =====
     year = {1:{},2:{},3:{},4:{}}
 
     n = len(skol_lista)
@@ -59,7 +67,7 @@ if system_file and form_file:
             year[3][s] = B
             year[4][s] = C
 
-    # ===== SKAPA EXCEL =====
+    # ===== EXCEL =====
     wb = Workbook()
     ws = wb.active
     ws.title = "Placeringar"
@@ -108,3 +116,6 @@ if system_file and form_file:
 
     with open(file,"rb") as f:
         st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
+
+else:
+    st.info("Ladda upp båda filer")
