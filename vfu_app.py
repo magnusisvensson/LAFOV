@@ -37,7 +37,7 @@ if system_file and form_file:
 
     skolor["Region"] = skolor["Partnerområde"].apply(get_region)
 
-    # ===== KAP =====
+    # kap (med ?)
     kap = {}
     for _, r in skolor.iterrows():
         try:
@@ -85,117 +85,121 @@ if system_file and form_file:
         for r in rows_r:
             kapasitet[r["Skola"]] += 1
 
-        usage = {
-            sk: {"År1":0,"År2":0,"År3":0,"År4":0}
-            for sk in skolor_r
-        }
+        usage = {sk: {"År1":0,"År2":0,"År3":0,"År4":0} for sk in skolor_r}
 
-        # ✅ HUVUDLOGIK (År2 = År3 alltid)
-        def try_place(student, start_index):
-
-            A = skolor_r[start_index]
-
-            if len(skolor_r) <= 2:
-                B = skolor_r[(start_index+1) % len(skolor_r)]
-                schedule = {
-                    "År1": A,
-                    "År2": B,
-                    "År3": B,
-                    "År4": B
-                }
-            else:
-                B = skolor_r[(start_index+1) % len(skolor_r)]
-                C = skolor_r[(start_index+2) % len(skolor_r)]
-                schedule = {
-                    "År1": A,
-                    "År2": B,
-                    "År3": B,
-                    "År4": C
-                }
-
-            # kontrollera plats (År2+År3 tillsammans)
-            if usage[schedule["År2"]]["År2"] >= kapasitet[schedule["År2"]]:
-                return False
-            if usage[schedule["År3"]]["År3"] >= kapasitet[schedule["År3"]]:
-                return False
-
-            if usage[schedule["År1"]]["År1"] >= kapasitet[schedule["År1"]]:
-                return False
-
-            if usage[schedule["År4"]]["År4"] >= kapasitet[schedule["År4"]]:
-                return False
-
-            # tilldela
+        def place(student, year, sk):
             for r in rows_r:
-                if r["Skola"] == schedule["År1"] and r["År1"] == "":
-                    r["År1"] = student
-                    usage[schedule["År1"]]["År1"] += 1
-                    break
+                if r["Skola"] == sk and r[year] == "":
+                    r[year] = student
+                    usage[sk][year] += 1
+                    return True
+            return False
 
-            for r in rows_r:
-                if r["Skola"] == schedule["År2"] and r["År2"] == "" and r["År3"] == "":
-                    r["År2"] = student
-                    r["År3"] = student
-                    usage[schedule["År2"]]["År2"] += 1
-                    usage[schedule["År2"]]["År3"] += 1
-                    break
-
-            for r in rows_r:
-                if r["Skola"] == schedule["År4"] and r["År4"] == "":
-                    r["År4"] = student
-                    usage[schedule["År4"]]["År4"] += 1
-                    break
-
-            return True
-
-        # ✅ FALLBACK (År2+År3 som ETTPAKET)
-        def fallback_place(student):
-
-            # År1
-            for sk in skolor_r:
-                if usage[sk]["År1"] < kapasitet[sk]:
-                    for r in rows_r:
-                        if r["Skola"] == sk and r["År1"] == "":
-                            r["År1"] = student
-                            usage[sk]["År1"] += 1
-                            break
-                    break
-
-            # År2 + År3 SAMMA
-            for sk in skolor_r:
-                if (
-                    usage[sk]["År2"] < kapasitet[sk] and
-                    usage[sk]["År3"] < kapasitet[sk]
-                ):
-                    for r in rows_r:
-                        if r["Skola"] == sk and r["År2"] == "" and r["År3"] == "":
-                            r["År2"] = student
-                            r["År3"] = student
-                            usage[sk]["År2"] += 1
-                            usage[sk]["År3"] += 1
-                            break
-                    break
-
-            # År4
-            for sk in skolor_r:
-                if usage[sk]["År4"] < kapasitet[sk]:
-                    for r in rows_r:
-                        if r["Skola"] == sk and r["År4"] == "":
-                            r["År4"] = student
-                            usage[sk]["År4"] += 1
-                            break
-                    break
-
-
-        # kör
         for i, student in enumerate(stud_r):
 
+            A = skolor_r[i % len(skolor_r)]
+            B = skolor_r[(i+1) % len(skolor_r)]
+            C = skolor_r[(i+2) % len(skolor_r)] if len(skolor_r) > 2 else B
+
+            # År1
+            place(student, "År1", A)
+
+            # ✅ År2 + År3 samma
             placed = False
+            for sk in [B] + skolor_r:
+                if usage[sk]["År2"] < kapasitet[sk] and usage[sk]["År3"] < kapasitet[sk]:
+                    ok2 = place(student, "År2", sk)
+                    ok3 = place(student, "År3", sk)
+                    if ok2 and ok3:
+                        placed = True
+                        break
 
-            for shift in range(len(skolor_r)):
-                if try_place(student, (i+shift) % len(skolor_r)):
-                    placed = True
-                    break
+            # År4
+            place(student, "År4", C)
 
-            if not placed:
-                fallback_place(student)
+    # ===== EXCEL =====
+    wb = Workbook()
+    ws = wb.active
+
+    bold = Font(bold=True)
+    header_font = Font(bold=True, size=14)
+    center = Alignment(horizontal="center")
+    left = Alignment(horizontal="left")
+
+    fill_region = {
+        "Kalmar": PatternFill("solid", fgColor="D9EAF7"),
+        "Oskarshamn": PatternFill("solid", fgColor="DFF5DF"),
+        "Karlskrona": PatternFill("solid", fgColor="FFF4CC"),
+    }
+
+    fill_skola = PatternFill("solid", fgColor="E7E7E7")
+    fill_warn = PatternFill("solid", fgColor="FFC7CE")
+    fill_warn_light = PatternFill("solid", fgColor="FFECEC")
+
+    ws.append(["Skola","År1","År2","År3","År4"])
+
+    row_idx = 2
+
+    for region in ["Kalmar","Oskarshamn","Karlskrona"]:
+
+        ws.append([])
+        row_idx += 1
+
+        ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=5)
+        cell = ws.cell(row_idx,1)
+        cell.value = region.upper()
+        cell.fill = fill_region[region]
+        cell.font = header_font
+        cell.alignment = center
+        row_idx += 1
+
+        ws.append([])
+        row_idx += 1
+
+        for skola in skolor[skolor["Region"] == region]["Skolenhet"]:
+
+            ws.append([f"{skola} (max {kap[skola]})"])
+            is_unknown = kap[skola] == "?"
+
+            for c in range(1,6):
+                cell = ws.cell(row_idx,c)
+                if is_unknown:
+                    cell.fill = fill_warn
+                    cell.font = Font(bold=True, color="9C0006")
+                else:
+                    cell.fill = fill_skola
+                    cell.font = bold
+
+            row_idx += 1
+
+            for r in rows:
+                if r["Skola"] == skola:
+                    ws.append(["", r["År1"], r["År2"], r["År3"], r["År4"]])
+
+                    for c in range(2,6):
+                        cell = ws.cell(row_idx,c)
+                        cell.alignment = left
+                        if is_unknown:
+                            cell.fill = fill_warn_light
+
+                    row_idx += 1
+
+            ws.append([])
+            row_idx += 1
+
+    # kolumnbredd
+    for col in ws.columns:
+        max_len = 0
+        for cell in col:
+            if cell.value:
+                max_len = max(max_len, len(str(cell.value)))
+        ws.column_dimensions[col[0].column_letter].width = max(max_len + 4, 14)
+
+    file = "kull_resultat.xlsx"
+    wb.save(file)
+
+    with open(file,"rb") as f:
+        st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
+
+else:
+    st.info("Ladda upp båda filer")
