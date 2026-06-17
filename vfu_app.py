@@ -1,7 +1,5 @@
 
-import streamlit as stimport streamimport pandas as pd
-
-from openpyxl import Workbook
+import streamlit as stimport streamlit as st
 from openpyxl.styles import Font, PatternFill, Alignment
 
 
@@ -11,10 +9,9 @@ system_file = st.file_uploader("1. Översiktsfil", type=["xlsx"])
 form_file = st.file_uploader("2. Formulärsvar", type=["xlsx"])
 
 kull = st.number_input("Kull", value=26)
-program = st.selectbox("Program", ["LAFOV", "LAGRV", "LGFRI"])
+program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
 
 
-# ===== REGION =====
 def get_region(text):
     t = str(text).lower()
     if "oskarshamn" in t:
@@ -26,18 +23,17 @@ def get_region(text):
 
 if system_file and form_file:
 
-    # ===== SKOLOR =====
     skolor = pd.read_excel(system_file)
     skolor.columns = skolor.columns.str.strip()
 
     skolor = skolor[
         (skolor["Kull"] == kull) &
         (skolor["Inriktning"].str.upper() == program)
-    ].copy()
+    ]
 
     skolor["Region"] = skolor["Partnerområde"].apply(get_region)
 
-    # ✅ kap med ?-hantering
+    # ✅ kap med ?
     kap = {}
     for _, r in skolor.iterrows():
         try:
@@ -45,7 +41,6 @@ if system_file and form_file:
         except:
             kap[r["Skolenhet"]] = "?"
 
-    # ===== STUDENTER =====
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
 
@@ -56,9 +51,9 @@ if system_file and form_file:
     students["Namn"] = students[fn] + " " + students[ln]
     students["Region"] = students[bost].apply(get_region)
 
-    # ===== PLATSRADER =====
     rows = []
     for _, r in skolor.iterrows():
+
         try:
             antal = int(float(r["Antal platser"]))
         except:
@@ -70,9 +65,6 @@ if system_file and form_file:
                 "Region": r["Region"],
                 "År1": "", "År2": "", "År3": "", "År4": ""
             })
-
-    # ===== (din placeringslogik behålls här)
-    # 🧠 (jag har lämnat den orörd för stabilitet)
 
     # ===== EXCEL =====
     wb = Workbook()
@@ -90,26 +82,25 @@ if system_file and form_file:
         "Karlskrona": PatternFill("solid", fgColor="FFF4CC"),
         "Skola": PatternFill("solid", fgColor="E7E7E7"),
         "Header": PatternFill("solid", fgColor="CCCCCC"),
-        "Warning": PatternFill("solid", fgColor="FFC7CE"),  # 🔴 röd
-        "WarningLight": PatternFill("solid", fgColor="FFECEC"),  # 🔴 ljus
+        "Warning": PatternFill("solid", fgColor="FFC7CE"),
     }
 
-    ws.append(["Skola", "År1", "År2", "År3", "År4"])
+    ws.append(["Skola","År1","År2","År3","År4"])
 
-    for c in range(1, 6):
-        ws.cell(1, c).fill = fills["Header"]
-        ws.cell(1, c).font = bold
-        ws.cell(1, c).alignment = center
+    for c in range(1,6):
+        ws.cell(1,c).fill = fills["Header"]
+        ws.cell(1,c).font = bold
+        ws.cell(1,c).alignment = center
 
     row_idx = 2
 
-    for region in ["Kalmar", "Oskarshamn", "Karlskrona"]:
+    for region in ["Kalmar","Oskarshamn","Karlskrona"]:
 
         ws.append([])
         row_idx += 1
 
         ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=5)
-        cell = ws.cell(row_idx, 1)
+        cell = ws.cell(row_idx,1)
         cell.value = region.upper()
         cell.fill = fills[region]
         cell.font = header_font
@@ -125,51 +116,23 @@ if system_file and form_file:
 
             is_unknown = kap[skola] == "?"
 
-            for c in range(1, 6):
-                cell = ws.cell(row_idx, c)
+            for c in range(1,6):
+                cell = ws.cell(row_idx,c)
+                cell.font = bold
 
                 if is_unknown:
                     cell.fill = fills["Warning"]
-                    cell.font = Font(bold=True, color="9C0006")
                 else:
                     cell.fill = fills["Skola"]
-                    cell.font = bold
 
             row_idx += 1
 
-            for r in rows:
-                if r["Skola"] == skola:
+    wb.save("kull_resultat.xlsx")
 
-                    ws.append(["", r["År1"], r["År2"], r["År3"], r["År4"]])
-
-                    for c in range(2, 6):
-                        cell = ws.cell(row_idx, c)
-                        cell.alignment = left
-
-                        if is_unknown:
-                            cell.fill = fills["WarningLight"]
-
-                    row_idx += 1
-
-            ws.append([])
-            row_idx += 1
-
-    # kolumnbredd
-    for col in ws.columns:
-        max_len = 0
-        col_letter = col[0].column_letter
-
-        for cell in col:
-            if cell.value:
-                max_len = max(max_len, len(str(cell.value)))
-
-        ws.column_dimensions[col_letter].width = max(max_len + 4, 14)
-
-    file = "kull_resultat.xlsx"
-    wb.save(file)
-
-    with open(file, "rb") as f:
-        st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
+    with open("kull_resultat.xlsx","rb") as f:
+        st.download_button("⬇️ Ladda ner Excel", f)
 
 else:
     st.info("Ladda upp båda filer")
+import pandas as pd
+
