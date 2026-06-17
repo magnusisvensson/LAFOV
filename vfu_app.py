@@ -1,7 +1,6 @@
 
 import streamlit as st
 import pandas as pd
-
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 
@@ -14,7 +13,6 @@ kull = st.number_input("Kull", value=26)
 program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
 
 
-# ===== REGION =====
 def get_region(text):
     t = str(text).lower()
     if "oskarshamn" in t:
@@ -54,7 +52,7 @@ if system_file and form_file:
     students["Namn"] = students[fn] + " " + students[ln]
     students["Region"] = students[bost].apply(get_region)
 
-    # ===== PLATSRADER =====
+    # ===== PLATSER =====
     rows = []
     for _, r in skolor.iterrows():
         for _ in range(int(r["Antal platser"])):
@@ -65,6 +63,7 @@ if system_file and form_file:
             })
 
     not_placed = []
+
 
     # ===== LOGIK =====
     for region in ["Kalmar","Oskarshamn","Karlskrona"]:
@@ -77,7 +76,6 @@ if system_file and form_file:
             not_placed += stud_r
             continue
 
-        # kapacitet per skola
         kapasitet = {sk: 0 for sk in skolor_r}
         for r in rows_r:
             kapasitet[r["Skola"]] += 1
@@ -87,37 +85,64 @@ if system_file and form_file:
             for sk in skolor_r
         }
 
-        for i, student in enumerate(stud_r):
+        def try_place(student, start_index):
 
-            A = skolor_r[i % len(skolor_r)]
+            A = skolor_r[start_index]
 
             if len(skolor_r) <= 2:
-                # ABAB
-                B = skolor_r[(skolor_r.index(A)+1) % len(skolor_r)]
+                B = skolor_r[(start_index+1) % len(skolor_r)]
                 schedule = {"År1":A,"År2":B,"År3":A,"År4":B}
             else:
-                # ABBC
-                B = skolor_r[(skolor_r.index(A)+1) % len(skolor_r)]
-                C = skolor_r[(skolor_r.index(A)+2) % len(skolor_r)]
+                B = skolor_r[(start_index+1) % len(skolor_r)]
+                C = skolor_r[(start_index+2) % len(skolor_r)]
                 schedule = {"År1":A,"År2":B,"År3":B,"År4":C}
 
-            ok = True
             for y in schedule:
                 if usage[schedule[y]][y] >= kapasitet[schedule[y]]:
-                    ok = False
-                    break
+                    return False
 
-            if not ok:
-                not_placed.append(student)
-                continue
-
-            for year in ["År1","År2","År3","År4"]:
+            # placera
+            for year in schedule:
                 sk = schedule[year]
                 for r in rows_r:
                     if r["Skola"] == sk and r[year] == "":
                         r[year] = student
                         usage[sk][year] += 1
                         break
+            return True
+
+
+        def fallback_place(student):
+            # fyll där det går (ignorerar rotation)
+            for year in ["År1","År2","År3","År4"]:
+                for sk in skolor_r:
+                    if usage[sk][year] < kapasitet[sk]:
+                        for r in rows_r:
+                            if r["Skola"] == sk and r[year] == "":
+                                r[year] = student
+                                usage[sk][year] += 1
+                                break
+                        break
+            return True
+
+
+        # ✅ placering
+        for i, student in enumerate(stud_r):
+
+            placed = False
+
+            # försök olika startskolor
+            for shift in range(len(skolor_r)):
+                if try_place(student, (i+shift) % len(skolor_r)):
+                    placed = True
+                    break
+
+            if not placed:
+                fallback_place(student)
+                placed = True
+
+            if not placed:
+                not_placed.append(student)
 
 
     # ===== EXCEL =====
@@ -137,32 +162,29 @@ if system_file and form_file:
         "Header": PatternFill("solid", fgColor="CCCCCC"),
     }
 
-    # kolumnrubrik
     ws.append(["Skola","År1","År2","År3","År4"])
+
     for c in range(1,6):
         cell = ws.cell(1,c)
-        cell.font = bold
         cell.fill = fills["Header"]
+        cell.font = bold
         cell.alignment = center
 
     row_idx = 2
 
     for region in ["Kalmar","Oskarshamn","Karlskrona"]:
 
-        # ✅ luft före block
         ws.append([])
         row_idx += 1
 
-        # ✅ regionrubrik (centrerad över alla kolumner)
         ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=5)
         cell = ws.cell(row_idx,1)
         cell.value = region.upper()
-        cell.font = header_font
         cell.fill = fills[region]
+        cell.font = header_font
         cell.alignment = center
         row_idx += 1
 
-        # luft efter
         ws.append([])
         row_idx += 1
 
@@ -170,12 +192,12 @@ if system_file and form_file:
 
         for skola in skolor_region:
 
-            # skolrubrik
             ws.append([f"{skola} (max {kap[skola]})"])
+
             for c in range(1,6):
-                cell = ws.cell(row_idx,c)
-                cell.fill = fills["Skola"]
-                cell.font = bold
+                ws.cell(row_idx,c).fill = fills["Skola"]
+                ws.cell(row_idx,c).font = bold
+
             row_idx += 1
 
             for r in rows:
@@ -187,18 +209,8 @@ if system_file and form_file:
 
                     row_idx += 1
 
-            # luft efter skola
             ws.append([])
             row_idx += 1
-
-    # auto bredd
-    for col in ws.columns:
-        max_len = 0
-        col_letter = col[0].column_letter
-        for cell in col:
-            if cell.value:
-                max_len = max(max_len, len(str(cell.value)))
-        ws.column_dimensions[col_letter].width = max_len + 3
 
     # ===== RAPPORT =====
     ws2 = wb.create_sheet("Rapport")
@@ -216,4 +228,3 @@ if system_file and form_file:
 
 else:
     st.info("Ladda upp båda filer")
-from openpyxl import Workbook
