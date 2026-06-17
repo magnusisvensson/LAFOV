@@ -23,21 +23,26 @@ if system_file and form_file:
         (skolor["Inriktning"].str.upper() == program)
     ]
 
-    # filtrera bort regioner
+    # filtrera bort Karlskrona/Oskarshamn
     skolor = skolor[
-        ~skolor["Partnerområde"].str.lower().str.contains("karlskrona|oskarshamn|ronneby", na=False)
+        ~skolor["Partnerområde"].str.lower().str.contains(
+            "karlskrona|oskarshamn|ronneby", na=False
+        )
     ]
 
     # bygg platser
     slots = []
+    kap = {}
 
     for _, r in skolor.iterrows():
         skola = r["Skolenhet"]
+
         try:
             k = int(r["Antal platser"])
         except:
             k = 0
 
+        kap[skola] = k
         slots += [skola] * k
 
     # ===== STUDENTER =====
@@ -50,29 +55,34 @@ if system_file and form_file:
     students["Namn"] = students[fn] + " " + students[ln]
     student_names = list(students["Namn"])
 
-    n_students = len(student_names)
-
-    # säkerställ att vi inte överskrider
-    if n_students > len(slots):
-        st.error("För många studenter för givna platser")
-        st.stop()
-
-    # ===== ROTERA PLATSER =====
+    # ===== ROTATION =====
     def rotate(lst, n):
         return lst[n:] + lst[:n]
 
-    slots_year1 = slots.copy()
-    slots_year2 = rotate(slots, 1)
-    slots_year4 = rotate(slots, 2)
+    slots_y1 = slots.copy()
+    slots_y2 = rotate(slots, 1)
+    slots_y4 = rotate(slots, 2)
 
-    # ===== TILLDELA =====
     year = {1:{},2:{},3:{},4:{}}
 
+    placed_students = set()
+
+    # ✅ TILLDELA SÅ LÅNGT DET GÅR
     for i, s in enumerate(student_names):
-        year[1][s] = slots_year1[i]
-        year[2][s] = slots_year2[i]
-        year[3][s] = slots_year2[i]
-        year[4][s] = slots_year4[i]
+
+        if i < len(slots):
+            year[1][s] = slots_y1[i]
+            year[2][s] = slots_y2[i]
+            year[3][s] = slots_y2[i]
+            year[4][s] = slots_y4[i]
+            placed_students.add(s)
+        else:
+            # ❗ ingen plats
+            year[1][s] = None
+            year[2][s] = None
+            year[3][s] = None
+            year[4][s] = None
+
 
     # ===== EXCEL =====
     wb = Workbook()
@@ -81,19 +91,18 @@ if system_file and form_file:
 
     ws.append(["Skola","År1","År2","År3","År4"])
 
-    skol_lista = list(dict.fromkeys(slots))
+    skol_lista = list(kap.keys())
 
     for skola in skol_lista:
 
-        max_p = slots.count(skola)
+        max_p = kap.get(skola, 0)
         ws.append([f"{skola} (max {max_p})"])
 
-        # samla per år
         year_lists = {f"År{i}":[] for i in [1,2,3,4]}
 
         for s in student_names:
             for y in [1,2,3,4]:
-                if year[y][s] == skola:
+                if year[y].get(s) == skola:
                     year_lists[f"År{y}"].append(s)
 
         for i in range(max_p):
@@ -104,12 +113,20 @@ if system_file and form_file:
 
         ws.append([])
 
+
     # ===== RAPPORT =====
     ws2 = wb.create_sheet("Rapport")
     ws2.append(["Student","Status"])
 
     for s in student_names:
-        ws2.append([s,"OK"])
+
+        if s in placed_students:
+            status = "OK"
+        else:
+            status = "EJ PLACERAD"
+
+        ws2.append([s, status])
+
 
     file = "kull_resultat.xlsx"
     wb.save(file)
