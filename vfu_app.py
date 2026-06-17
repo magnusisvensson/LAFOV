@@ -1,24 +1,16 @@
+
 import streamlit as st
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font
 
-st.title("VFU – Placering (rotation korrekt)")
+st.title("VFU – Placering (din modell)")
 
 system_file = st.file_uploader("1. Översiktsfil", type=["xlsx"])
 form_file = st.file_uploader("2. Formulärsvar", type=["xlsx"])
 
 kull = st.number_input("Använd skolor planerade för kull:", value=26)
 program = st.selectbox("Inom program:", ["LAFOV","LAGRV","LGFRI"])
-
-
-def school_region(partner):
-    p = str(partner).lower()
-    if "oskarshamn" in p:
-        return "Oskarshamn"
-    if "karlskrona" in p or "ronneby" in p:
-        return "Karlskrona"
-    return "Kalmar"
 
 
 if system_file and form_file:
@@ -28,24 +20,16 @@ if system_file and form_file:
     skolor.columns = skolor.columns.str.strip()
 
     skolor = skolor[
-        (skolor["Kull"] == kull) &
-        (skolor["Inriktning"].str.upper() == program)
-    ].copy()
-
-    skolor["Region"] = skolor["Partnerområde"].apply(school_region)
+        (skolor["Kull"]==kull) &
+        (skolor["Inriktning"].str.upper()==program)
+    ]
 
     kap = {
-        r["Skolenhet"]: int(r["Antal platser"]) if pd.notna(r["Antal platser"]) else 0
+        r["Skolenhet"]: int(r["Antal platser"])
         for _, r in skolor.iterrows()
     }
 
-    skol_lista = list(skolor["Skolenhet"])
-
-    def school_sort_key(s):
-        region = skolor.loc[skolor["Skolenhet"]==s,"Region"].values[0]
-        order = {"Kalmar":0,"Oskarshamn":1,"Karlskrona":2}
-        return (order.get(region,3), s)
-
+    skol_lista = list(kap.keys())
 
     # ===== STUDENTER =====
     students = pd.read_excel(form_file, sheet_name="Data")
@@ -57,104 +41,125 @@ if system_file and form_file:
     students["Namn"] = students[fn] + " " + students[ln]
     student_names = list(students["Namn"])
 
-    n = len(student_names)
+    # ===== TRACKING =====
+    cap_used = {}
 
-    # ===== BYGG PLATSER =====
-    def build_slots():
-        slots = []
-        for skola, k in kap.items():
-            slots += [skola]*k
-        return slots
+    def has_space(s,y):
+        return cap_used.get((s,y),0) < kap.get(s,0)
 
-    slots_y1 = build_slots()[:n]
-    slots_y2 = build_slots()[:n]
-    slots_y4 = build_slots()[:n]
+    def use(s,y):
+        cap_used[(s,y)] = cap_used.get((s,y),0)+1
 
-    # ===== ROTATION =====
-    # År2: rotera 1 steg
-    slots_y2 = slots_y2[1:] + slots_y2[:1]
 
-    # År4: rotera 2 steg
-    slots_y4 = slots_y4[2:] + slots_y4[:2]
+    # ===== ÅR1 =====
+    year = {1:{},2:{},3:{},4:{}}
 
-    # ===== STUDENTDATA =====
-    student_rows = {}
+    i = 0
+    for skola, max_p in kap.items():
+        for _ in range(max_p):
+            if i >= len(student_names):
+                break
 
-    for i, namn in enumerate(student_names):
+            s = student_names[i]
+            year[1][s] = skola
+            use(skola,1)
+            i += 1
 
-        student_rows[namn] = {
-            "År1": slots_y1[i],
-            "År2": slots_y2[i],
-            "År3": slots_y2[i],  # A-B-B-C
-            "År4": slots_y4[i]
-        }
 
-    # ===== SKOLVY =====
+    # ===== ÅR2 =====
+    for s in student_names:
+
+        prev = year[1][s]
+
+        if has_space(prev,2):
+            year[2][s] = prev
+            use(prev,2)
+        else:
+            for sk in skol_lista:
+                if has_space(sk,2):
+                    year[2][s] = sk
+                    use(sk,2)
+                    break
+
+
+    # ===== ÅR3 =====
+    year[3] = year[2].copy()
+
+
+    # ===== ÅR4 =====
+    for s in student_names:
+
+        prev = year[2][s]
+        placed = False
+
+        # försök byta
+        for sk in skol_lista:
+            if sk != prev and has_space(sk,4):
+                year[4][s] = sk
+                use(sk,4)
+                placed = True
+                break
+
+        # annars stanna
+        if not placed:
+            year[4][s] = prev
+            use(prev,4)
+
+
+    # ===== BYGG SKOL-DATA =====
     school_data = {}
 
-    for student, data in student_rows.items():
+    for s in student_names:
+        for y in ["År1","År2","År3","År4"]:
+            yr = int(y[-1])
+            sk = year[yr][s]
 
-        for year, skola in data.items():
+            school_data.setdefault(sk,{})
+            school_data[sk].setdefault(s,
+                {"År1":"","År2":"","År3":"","År4":""}
+            )
 
-            school_data.setdefault(skola, {})
-            school_data[skola].setdefault(student,{
-                "År1":"","År2":"","År3":"","År4":""
-            })
+            school_data[sk][s][y] = s
 
-            school_data[skola][student][year] = student
 
     # ===== EXCEL =====
     wb = Workbook()
     ws = wb.active
-    ws.title = "Placeringar"
 
     fill = PatternFill(start_color="DDDDDD", fill_type="solid")
 
     ws.append(["Skola","År1","År2","År3","År4"])
 
-    for skola in sorted(kap.keys(), key=school_sort_key):
+    for skola, max_p in kap.items():
 
-        max_platser = kap.get(skola,0)
-
-        ws.append([f"{skola} (max {max_platser})"])
+        ws.append([f"{skola} (max {max_p})"])
         r = ws.max_row
 
         for c in range(1,6):
             ws.cell(r,c).fill = fill
             ws.cell(r,c).font = Font(bold=True)
 
-        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=5)
+        ws.merge_cells(start_row=r,start_column=1,end_row=r,end_column=5)
 
-        rows = [
-            {"År1":"","År2":"","År3":"","År4":""}
-            for _ in range(max_platser)
-        ]
+        rows=[{"År1":"","År2":"","År3":"","År4":""}
+              for _ in range(max_p)]
 
-        i = 0
+        i=0
         if skola in school_data:
             for student,data in school_data[skola].items():
-                if i >= max_platser:
+                if i>=max_p:
                     break
-                rows[i] = data
-                i += 1
+                rows[i]=data
+                i+=1
 
         for row in rows:
             ws.append(["",row["År1"],row["År2"],row["År3"],row["År4"]])
 
         ws.append([])
 
-    # ===== RAPPORT =====
-    ws2 = wb.create_sheet("Rapport")
-    ws2.append(["Student","Status"])
-
-    for s in student_names:
-        ws2.append([s,"OK"])
-
     file="kull_resultat.xlsx"
     wb.save(file)
 
     with open(file,"rb") as f:
         st.download_button("⬇️ Ladda ner Excel",f,file_name=file)
-
-else:
-    st.info("Ladda upp båda filer")
+``
