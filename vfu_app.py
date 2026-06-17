@@ -1,7 +1,5 @@
 
-import streamlit as st
-import pandas as pd
-from openpyxl import Workbook
+import streamlit as stimport streamlit as st openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 
 st.title("VFU-placeringssystem")
@@ -13,6 +11,7 @@ kull = st.number_input("Kull", value=26)
 program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
 
 
+# ===== REGION =====
 def get_region(text):
     t = str(text).lower()
     if "oskarshamn" in t:
@@ -52,7 +51,7 @@ if system_file and form_file:
     students["Namn"] = students[fn] + " " + students[ln]
     students["Region"] = students[bost].apply(get_region)
 
-    # ===== PLATSER =====
+    # ===== PLATSRADER =====
     rows = []
     for _, r in skolor.iterrows():
         for _ in range(int(r["Antal platser"])):
@@ -63,7 +62,6 @@ if system_file and form_file:
             })
 
     not_placed = []
-
 
     # ===== LOGIK =====
     for region in ["Kalmar","Oskarshamn","Karlskrona"]:
@@ -101,7 +99,6 @@ if system_file and form_file:
                 if usage[schedule[y]][y] >= kapasitet[schedule[y]]:
                     return False
 
-            # placera
             for year in schedule:
                 sk = schedule[year]
                 for r in rows_r:
@@ -113,7 +110,6 @@ if system_file and form_file:
 
 
         def fallback_place(student):
-            # fyll där det går (ignorerar rotation)
             for year in ["År1","År2","År3","År4"]:
                 for sk in skolor_r:
                     if usage[sk][year] < kapasitet[sk]:
@@ -123,15 +119,11 @@ if system_file and form_file:
                                 usage[sk][year] += 1
                                 break
                         break
-            return True
 
-
-        # ✅ placering
         for i, student in enumerate(stud_r):
 
             placed = False
 
-            # försök olika startskolor
             for shift in range(len(skolor_r)):
                 if try_place(student, (i+shift) % len(skolor_r)):
                     placed = True
@@ -139,10 +131,6 @@ if system_file and form_file:
 
             if not placed:
                 fallback_place(student)
-                placed = True
-
-            if not placed:
-                not_placed.append(student)
 
 
     # ===== EXCEL =====
@@ -152,7 +140,9 @@ if system_file and form_file:
 
     bold = Font(bold=True)
     header_font = Font(bold=True, size=14)
+
     center = Alignment(horizontal="center")
+    left = Alignment(horizontal="left")
 
     fills = {
         "Kalmar": PatternFill("solid", fgColor="D9EAF7"),
@@ -195,8 +185,9 @@ if system_file and form_file:
             ws.append([f"{skola} (max {kap[skola]})"])
 
             for c in range(1,6):
-                ws.cell(row_idx,c).fill = fills["Skola"]
-                ws.cell(row_idx,c).font = bold
+                cell = ws.cell(row_idx,c)
+                cell.fill = fills["Skola"]
+                cell.font = bold
 
             row_idx += 1
 
@@ -204,13 +195,27 @@ if system_file and form_file:
                 if r["Skola"] == skola:
                     ws.append(["", r["År1"], r["År2"], r["År3"], r["År4"]])
 
+                    # ✅ vänsterjustera namn
                     for c in range(2,6):
-                        ws.cell(row_idx,c).alignment = center
+                        ws.cell(row_idx,c).alignment = left
 
                     row_idx += 1
 
             ws.append([])
             row_idx += 1
+
+    # ✅ förbättrad kolumnbredd
+    for col in ws.columns:
+        max_len = 0
+        col_letter = col[0].column_letter
+
+        for cell in col:
+            if cell.value:
+                length = len(str(cell.value))
+                if length > max_len:
+                    max_len = length
+
+        ws.column_dimensions[col_letter].width = max(max_len + 4, 14)
 
     # ===== RAPPORT =====
     ws2 = wb.create_sheet("Rapport")
@@ -228,3 +233,4 @@ if system_file and form_file:
 
 else:
     st.info("Ladda upp båda filer")
+import pandas as pd
