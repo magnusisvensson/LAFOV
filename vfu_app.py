@@ -1,9 +1,10 @@
 
-import streamlit as stimport streamimport pandas as pd
+import streamlit as st
+import pandas as pd
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
-``
+
 
 st.title("VFU-placeringssystem")
 
@@ -66,7 +67,7 @@ if system_file and form_file:
 
     not_placed = []
 
-    # ===== LOGIK =====
+    # ===== PLACERING =====
     for region in ["Kalmar","Oskarshamn","Karlskrona"]:
 
         rows_r = [r for r in rows if r["Region"] == region]
@@ -134,6 +135,10 @@ if system_file and form_file:
 
             if not placed:
                 fallback_place(student)
+                placed = True
+
+            if not placed:
+                not_placed.append(student)
 
 
     # ===== EXCEL =====
@@ -188,9 +193,8 @@ if system_file and form_file:
             ws.append([f"{skola} (max {kap[skola]})"])
 
             for c in range(1,6):
-                cell = ws.cell(row_idx,c)
-                cell.fill = fills["Skola"]
-                cell.font = bold
+                ws.cell(row_idx,c).fill = fills["Skola"]
+                ws.cell(row_idx,c).font = bold
 
             row_idx += 1
 
@@ -198,7 +202,6 @@ if system_file and form_file:
                 if r["Skola"] == skola:
                     ws.append(["", r["År1"], r["År2"], r["År3"], r["År4"]])
 
-                    # ✅ vänsterjustera namn
                     for c in range(2,6):
                         ws.cell(row_idx,c).alignment = left
 
@@ -207,16 +210,13 @@ if system_file and form_file:
             ws.append([])
             row_idx += 1
 
-    # ✅ förbättrad kolumnbredd
     for col in ws.columns:
         max_len = 0
         col_letter = col[0].column_letter
 
         for cell in col:
             if cell.value:
-                length = len(str(cell.value))
-                if length > max_len:
-                    max_len = length
+                max_len = max(max_len, len(str(cell.value)))
 
         ws.column_dimensions[col_letter].width = max(max_len + 4, 14)
 
@@ -236,4 +236,3 @@ if system_file and form_file:
 
 else:
     st.info("Ladda upp båda filer")
-import pandas as pd
