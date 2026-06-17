@@ -31,8 +31,8 @@ if system_file and form_file:
     skolor.columns = skolor.columns.str.strip()
 
     skolor = skolor[
-        (skolor["Skolor planerade för Kull"] == kull) &
-        (skolor["Inom inriktning"].str.upper() == program)
+        (skolor["Kull"] == skolor placerade för kull) &
+        (skolor["Inriktning"].str.upper() == inom program)
     ].copy()
 
     skolor["Region"] = skolor["Partnerområde"].apply(get_region)
