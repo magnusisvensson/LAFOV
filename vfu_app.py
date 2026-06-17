@@ -56,7 +56,7 @@ if system_file and form_file:
     students["Namn"] = students[fn] + " " + students[ln]
     students["Region"] = students[bost].apply(get_region)
 
-    # ===== BYGG ALLA PLATSER =====
+    # ===== BYGG PLATSER =====
     rows = []
     for _, r in skolor.iterrows():
         for _ in range(int(r["Antal platser"])):
@@ -89,14 +89,14 @@ if system_file and form_file:
         students_used = stud_r[:n]
         not_placed += stud_r[n:]
 
-        # skapa sekvens av skolor (ABAB fördelning)
+        # skapa skolfördelning (ABAB grund)
         school_seq = []
         i = 0
         while len(school_seq) < n:
             school_seq.append(skolor_r[i % len(skolor_r)])
             i += 1
 
-        # 🔵 välj rotationstyp
+        # rotationsregler
         if len(skolor_r) <= 2:
             # ABAB
             schools_y1 = school_seq
@@ -110,25 +110,24 @@ if system_file and form_file:
             schools_y3 = schools_y2
             schools_y4 = rotate(school_seq, 2)
 
-        # studentrotation
         names_y1 = students_used
         names_y2 = rotate(students_used, 1)
         names_y3 = names_y2
         names_y4 = rotate(students_used, 2)
 
-        # ✅ robust tilldelning (INGEN INDEXERROR)
+        # ✅ robust placering (ingen indexbugg)
         def assign(school, year, student):
             for r in rows_r:
                 if r["Skola"] == school and r[year] == "":
                     r[year] = student
                     return
 
-        for i in range(n):
+        # ✅ KRITISK FIX: loopa bara över studenter
+        for i in range(len(students_used)):
             assign(schools_y1[i], "År1", names_y1[i])
             assign(schools_y2[i], "År2", names_y2[i])
             assign(schools_y3[i], "År3", names_y3[i])
             assign(schools_y4[i], "År4", names_y4[i])
-
 
     # ===== EXCEL =====
     wb = Workbook()
