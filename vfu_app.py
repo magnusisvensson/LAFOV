@@ -13,17 +13,14 @@ kull = st.number_input("Använd skolor planerade för kull:", value=26)
 program = st.selectbox("Inom program:", ["LAFOV","LAGRV","LGFRI"])
 
 
-# ===== REGION =====
 def get_region(text):
     t = str(text).lower()
-
     if "kalmar" in t:
         return "Kalmar"
     if "oskarshamn" in t:
         return "Oskarshamn"
     if "karlskrona" in t or "ronneby" in t:
         return "Karlskrona"
-
     return "OKÄND"
 
 
@@ -47,12 +44,7 @@ if system_file and form_file:
 
     skol_lista = list(kap.keys())
 
-    # skolregion
-    partner_col = [c for c in skolor.columns if "partner" in c.lower()]
-    if partner_col:
-        skolor["Region"] = skolor[partner_col[0]].apply(get_region)
-    else:
-        skolor["Region"] = "Kalmar"
+    skolor["Region"] = skolor["Partnerområde"].apply(get_region)
 
     # ===== STUDENTER =====
     students = pd.read_excel(form_file, sheet_name="Data")
@@ -67,38 +59,55 @@ if system_file and form_file:
 
     student_names = list(students["Namn"])
 
-    # ===== ÅR1 (FYLL) =====
+    # ===== GRUPPERA 2 OCH 2 =====
+    grupper = [
+        student_names[i:i+2]
+        for i in range(0, len(student_names), 2)
+    ]
+
+    # ===== ÅR-DATA =====
     year = {1:{},2:{},3:{},4:{}}
 
-    idx = 0
+    # ===== STEG 1: ÅR1 =====
+    group_index = 0
     for skola, max_p in kap.items():
-        for _ in range(max_p):
-            if idx >= len(student_names):
+
+        platser = max_p // 2  # antal grupper
+
+        for _ in range(platser):
+            if group_index >= len(grupper):
                 break
-            year[1][student_names[idx]] = skola
-            idx += 1
 
+            grupp = grupper[group_index]
 
-    # ===== HJÄLP: hitta index i skol_lista =====
-    def next_school(current, step=1):
-        i = skol_lista.index(current)
-        return skol_lista[(i + step) % len(skol_lista)]
+            for student in grupp:
+                year[1][student] = skola
 
+            group_index += 1
 
-    # ===== ÅR2 (B) =====
-    for s in student_names:
-        A = year[1][s]
-        B = next_school(A, 1)
-        year[2][s] = B
+    # ===== HJÄLP =====
+    def next_school(sk, step=1):
+        i = skol_lista.index(sk)
+        return skol_lista[(i+step) % len(skol_lista)]
 
-    # ===== ÅR3 = ÅR2 =====
+    # ===== ÅR2 =====
+    for grupp in grupper:
+        A = year[1][grupp[0]]
+        B = next_school(A)
+
+        for s in grupp:
+            year[2][s] = B
+
+    # ===== ÅR3 =====
     year[3] = year[2].copy()
 
-    # ===== ÅR4 (C) =====
-    for s in student_names:
-        B = year[2][s]
-        C = next_school(B, 1)
-        year[4][s] = C
+    # ===== ÅR4 =====
+    for grupp in grupper:
+        B = year[2][grupp[0]]
+        C = next_school(B)
+
+        for s in grupp:
+            year[4][s] = C
 
 
     # ===== BYGG SKOLVY =====
@@ -106,8 +115,7 @@ if system_file and form_file:
 
     for s in student_names:
         for y in ["År1","År2","År3","År4"]:
-            yr = int(y[-1])
-            sk = year[yr][s]
+            sk = year[int(y[-1])][s]
 
             school_data.setdefault(sk,{})
             school_data[sk].setdefault(s,{
@@ -115,7 +123,6 @@ if system_file and form_file:
             })
 
             school_data[sk][s][y] = s
-
 
     # ===== EXCEL =====
     wb = Workbook()
@@ -177,7 +184,6 @@ if system_file and form_file:
             status = "OK - OBS LÅNG PENDLING" if long_commute else "OK"
 
         ws2.append([s, status])
-
 
     file = "kull_resultat.xlsx"
     wb.save(file)
