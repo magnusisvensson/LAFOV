@@ -1,5 +1,9 @@
-import streamlit as stimport streamlit as st
-from openpyxl.styles import Font, PatternFill, Alignment
+import streamlit as stimport streamlit as Font, PatternFill, Alignment
+``
+import pandas as pd
+
+from openpyxl import Workbook
+
 
 
 st.title("VFU-placeringssystem")
