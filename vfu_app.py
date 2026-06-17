@@ -32,6 +32,7 @@ if system_file and form_file:
         (skolor["Inriktning"].str.upper() == program)
     ].copy()
 
+    # robust kapacitet
     kap = {}
     for _, r in skolor.iterrows():
         try:
@@ -41,7 +42,7 @@ if system_file and form_file:
 
     skol_lista = [s for s in kap if kap[s] > 0]
 
-    # region skola
+    # skolregion
     if "Partnerområde" in skolor.columns:
         skolor["Region"] = skolor["Partnerområde"].apply(get_region)
     else:
@@ -60,43 +61,36 @@ if system_file and form_file:
 
     student_names = list(students["Namn"])
 
-    # ===== ÅR1 (FULL TÄCKNING) =====
+    # ===== ÅR1 (GARANTERA ALLA) =====
     year = {1:{},2:{},3:{},4:{}}
 
     slots = []
     for skola, max_p in kap.items():
         slots += [skola] * int(max_p)
 
-    # 🔥 garantera att ALLA får plats
     while len(slots) < len(student_names):
         slots += skol_lista
 
     for i, student in enumerate(student_names):
         year[1][student] = slots[i]
 
-
-    # ===== BYGG GRUPPER =====
+    # ===== GRUPPER =====
     grupper = {}
     for s, sk in year[1].items():
         grupper.setdefault(sk, []).append(s)
 
-
     # ===== FIXA ENSAMMA =====
     for skola, grupp in list(grupper.items()):
         if len(grupp) == 1:
-
             for sk2, grp2 in grupper.items():
                 if sk2 != skola and len(grp2) >= 3:
-                    flytt = grp2.pop()
-                    grupper[skola].append(flytt)
+                    grupper[skola].append(grp2.pop())
                     break
 
-
-    # ✅ KRITISK FIX: SYNKA TILLBAKA TILL ÅR1
+    # ✅ SYNKA ÅR1
     for skola, grupp in grupper.items():
         for s in grupp:
             year[1][s] = skola
-
 
     # ===== ROTATION =====
     def next_school(skola, step=1):
@@ -104,7 +98,6 @@ if system_file and form_file:
         return skol_lista[(i + step) % len(skol_lista)]
 
     for skola, grupp in grupper.items():
-
         B = next_school(skola, 1)
         C = next_school(skola, 2)
 
@@ -113,8 +106,7 @@ if system_file and form_file:
             year[3][s] = B
             year[4][s] = C
 
-
-    # ===== SKOL-DATA =====
+    # ===== BYGG SKOLDATA =====
     school_data = {}
 
     for s in student_names:
@@ -125,9 +117,7 @@ if system_file and form_file:
             school_data[sk].setdefault(s, {
                 "År1":"","År2":"","År3":"","År4":""
             })
-
             school_data[sk][s][f"År{y}"] = s
-
 
     # ===== EXCEL =====
     wb = Workbook()
@@ -138,9 +128,7 @@ if system_file and form_file:
 
     ws.append(["Skola","År1","År2","År3","År4"])
 
-    for skola in sorted(kap.keys()):
-
-        max_p = int(kap.get(skola,0))
+    for skola, max_p in kap.items():
 
         ws.append([f"{skola} (max {max_p})"])
         r = ws.max_row
@@ -151,22 +139,33 @@ if system_file and form_file:
 
         ws.merge_cells(start_row=r,start_column=1,end_row=r,end_column=5)
 
-        # ✅ undvik dubletter
-        students_here = list(dict.fromkeys(
-            school_data.get(skola, {}).keys()
-        ))
+        # ✅ NY LOGIK (KORREKT)
+        year_lists = {
+            "År1": [],
+            "År2": [],
+            "År3": [],
+            "År4": []
+        }
 
-        rows=[{"År1":"","År2":"","År3":"","År4":""}
-              for _ in range(max_p)]
+        for student, data in school_data.get(skola, {}).items():
+            for y in ["År1","År2","År3","År4"]:
+                if data[y] != "":
+                    year_lists[y].append(student)
 
-        for i, student in enumerate(students_here[:max_p]):
-            rows[i] = school_data[skola][student]
+        rows = []
+        for i in range(max_p):
+            row = {}
+            for y in ["År1","År2","År3","År4"]:
+                if i < len(year_lists[y]):
+                    row[y] = year_lists[y][i]
+                else:
+                    row[y] = ""
+            rows.append(row)
 
         for row in rows:
             ws.append(["",row["År1"],row["År2"],row["År3"],row["År4"]])
 
         ws.append([])
-
 
     # ===== RAPPORT =====
     ws2 = wb.create_sheet("Rapport")
@@ -192,7 +191,6 @@ if system_file and form_file:
 
         ws2.append([s, status])
 
-
     file = "kull_resultat.xlsx"
     wb.save(file)
 
@@ -201,4 +199,3 @@ if system_file and form_file:
 
 else:
     st.info("Ladda upp båda filer")
-
