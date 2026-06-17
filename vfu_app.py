@@ -13,7 +13,6 @@ kull = st.number_input("Kull", value=26)
 program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
 
 
-# ===== REGION =====
 def get_region(text):
     t = str(text).lower()
     if "oskarshamn" in t:
@@ -45,7 +44,6 @@ if system_file and form_file:
         if k > 0:
             kap[r["Skolenhet"]] = k
 
-    # ===== STUDENTER =====
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
 
@@ -56,9 +54,7 @@ if system_file and form_file:
     students["Namn"] = students[fn] + " " + students[ln]
     students["Region"] = students[bost].apply(get_region)
 
-    # ===== PLATSER =====
     rows = []
-
     for _, r in skolor.iterrows():
         for _ in range(int(r["Antal platser"])):
             rows.append({
@@ -69,70 +65,90 @@ if system_file and form_file:
 
     not_placed = []
 
-    # ===== FÖRDELA PER REGION =====
+    def rotate(lst, n):
+        return lst[n:] + lst[:n]
+
+    # ===== KÄRNLOGIK =====
     for region in ["Kalmar","Oskarshamn","Karlskrona"]:
 
         rows_r = [r for r in rows if r["Region"] == region]
         stud_r = list(students[students["Region"] == region]["Namn"])
 
+        skolor_r = list(dict.fromkeys([r["Skola"] for r in rows_r]))
+
         if not rows_r:
             not_placed += stud_r
             continue
 
-        def rotate(lst, n):
-            return lst[n:] + lst[:n]
+        n = len(rows_r)
 
-        n_rows = len(rows_r)
+        students_used = stud_r[:n]
+        not_placed += stud_r[n:]
 
-        # ✅ TA SÅ MÅNGA SOM FÅR PLATS
-        placed_students = stud_r[:n_rows]
-        overflow_students = stud_r[n_rows:]
+        # ✅ SKOL-SEKVENS
+        school_seq = []
+        i = 0
+        while len(school_seq) < n:
+            school_seq.append(skolor_r[i % len(skolor_r)])
+            i += 1
 
-        not_placed += overflow_students
-
-        # ✅ ROTATION
-        y1 = placed_students
-        y2 = rotate(placed_students, 1)
-        y3 = y2
-
-        # 🔵 SKOLLOGIK
-        unique_schools = list(dict.fromkeys([r["Skola"] for r in rows_r]))
-
-        if len(unique_schools) <= 2:
-            # ABAB
-            y4 = rotate(placed_students, 0)
+        # ✅ ROTATION PER REGION
+        if len(skolor_r) <= 2:
+            schools_y1 = school_seq
+            schools_y2 = rotate(school_seq, 1)
+            schools_y3 = schools_y2
+            schools_y4 = school_seq
         else:
-            # ABBC
-            y4 = rotate(placed_students, 2)
+            schools_y1 = school_seq
+            schools_y2 = rotate(school_seq, 1)
+            schools_y3 = schools_y2
+            schools_y4 = rotate(school_seq, 2)
 
-        # ✅ FYLL ALLA RADER (INGEN FÖRSVINNER)
-        for i, row in enumerate(rows_r):
+        names_y1 = students_used
+        names_y2 = rotate(students_used, 1)
+        names_y3 = names_y2
+        names_y4 = rotate(students_used, 2)
 
-            if i < len(placed_students):
-                row["År1"] = y1[i]
-                row["År2"] = y2[i]
-                row["År3"] = y3[i]
-                row["År4"] = y4[i]
+        # ✅ SKAPA TOMMAPER SKOLA
+        school_rows = {sk: [] for sk in skolor_r}
+        for row in rows_r:
+            school_rows[row["Skola"]].append(row)
 
+        counters = {sk: 0 for sk in skolor_r}
+
+        # ✅ FYLL RÄTT RADER
+        for i in range(n):
+
+            sk1 = schools_y1[i]
+            idx = counters[sk1]
+            if idx < len(school_rows[sk1]):
+                school_rows[sk1][idx]["År1"] = names_y1[i]
+
+            sk2 = schools_y2[i]
+            idx = counters[sk2]
+            if idx < len(school_rows[sk2]):
+                school_rows[sk2][idx]["År2"] = names_y2[i]
+                school_rows[sk2][idx]["År3"] = names_y3[i]
+
+            sk4 = schools_y4[i]
+            idx = counters[sk4]
+            if idx < len(school_rows[sk4]):
+                school_rows[sk4][idx]["År4"] = names_y4[i]
+
+            counters[sk1] += 1
 
     # ===== EXCEL =====
     wb = Workbook()
     ws = wb.active
     ws.title = "Placeringar"
 
-    header_font = Font(bold=True)
-
     ws.append(["Skola","År1","År2","År3","År4"])
 
     for region in ["Kalmar","Oskarshamn","Karlskrona"]:
 
         ws.append([f"--- {region.upper()} ---"])
-        ws.cell(ws.max_row, 1).font = header_font
 
-        skolor_region = skolor[skolor["Region"] == region]["Skolenhet"]
-
-        for skola in skolor_region:
-
+        for skola in skolor[skolor["Region"]==region]["Skolenhet"]:
             ws.append([f"{skola} (max {kap[skola]})"])
 
             for r in rows:
@@ -143,22 +159,17 @@ if system_file and form_file:
 
         ws.append([])
 
-    # ===== RAPPORT =====
     ws2 = wb.create_sheet("Rapport")
     ws2.append(["Student","Status"])
 
     for s in students["Namn"]:
-        if s in not_placed:
-            ws2.append([s,"EJ PLACERAD"])
-        else:
-            ws2.append([s,"OK"])
+        ws2.append([s, "EJ PLACERAD" if s in not_placed else "OK"])
 
-
-    file = "kull_resultat.xlsx"
+    file="kull_resultat.xlsx"
     wb.save(file)
 
     with open(file,"rb") as f:
-        st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
+        st.download_button("⬇️ Ladda ner", f, file_name=file)
 
 else:
     st.info("Ladda upp båda filer")
