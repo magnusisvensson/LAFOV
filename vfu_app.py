@@ -13,14 +13,12 @@ kull = st.number_input("Använd skolor planerade för kull:", value=26)
 program = st.selectbox("Inom program:", ["LAFOV","LAGRV","LGFRI"])
 
 
+# ===== REGION =====
 def get_region(text):
     t = str(text).lower()
-    if "kalmar" in t:
-        return "Kalmar"
-    if "oskarshamn" in t:
-        return "Oskarshamn"
-    if "karlskrona" in t or "ronneby" in t:
-        return "Karlskrona"
+    if "kalmar" in t: return "Kalmar"
+    if "oskarshamn" in t: return "Oskarshamn"
+    if "karlskrona" in t or "ronneby" in t: return "Karlskrona"
     return "OKÄND"
 
 
@@ -35,6 +33,7 @@ if system_file and form_file:
         (skolor["Inriktning"].str.upper() == program)
     ].copy()
 
+    # robust kapacitet
     kap = {}
     for _, r in skolor.iterrows():
         try:
@@ -42,9 +41,13 @@ if system_file and form_file:
         except:
             kap[r["Skolenhet"]] = 0
 
-    skol_lista = list(kap.keys())
+    skol_lista = [s for s in kap.keys() if kap[s] > 0]
 
-    skolor["Region"] = skolor["Partnerområde"].apply(get_region)
+    # skolregion (om finns)
+    if "Partnerområde" in skolor.columns:
+        skolor["Region"] = skolor["Partnerområde"].apply(get_region)
+    else:
+        skolor["Region"] = "Kalmar"
 
     # ===== STUDENTER =====
     students = pd.read_excel(form_file, sheet_name="Data")
@@ -59,80 +62,78 @@ if system_file and form_file:
 
     student_names = list(students["Namn"])
 
-    # ===== GRUPPERA 2 OCH 2 =====
-    grupper = [
-        student_names[i:i+2]
-        for i in range(0, len(student_names), 2)
-    ]
-
-    # ===== ÅR-DATA =====
+    # ===== ÅR1 – FYLL ALLA =====
     year = {1:{},2:{},3:{},4:{}}
 
-    # ===== STEG 1: ÅR1 =====
-    group_index = 0
+    i = 0
     for skola, max_p in kap.items():
-
-        platser = max_p // 2  # antal grupper
-
-        for _ in range(platser):
-            if group_index >= len(grupper):
+        for _ in range(int(max_p)):
+            if i >= len(student_names):
                 break
+            year[1][student_names[i]] = skola
+            i += 1
 
-            grupp = grupper[group_index]
+    # ===== GRUPPER FRÅN ÅR1 =====
+    grupper = {}
+    for s, sk in year[1].items():
+        grupper.setdefault(sk, []).append(s)
 
-            for student in grupp:
-                year[1][student] = skola
+    # ===== FIXA ENSAMMA =====
+    # flytta från större grupper
+    for skola in list(grupper.keys()):
+        if len(grupper[skola]) == 1:
 
-            group_index += 1
+            ensam = grupper[skola][0]
 
-    # ===== HJÄLP =====
+            # hitta grupp med fler än 2
+            for sk2 in grupper:
+                if sk2 != skola and len(grupper[sk2]) >= 3:
+                    flytt = grupper[sk2].pop()
+                    grupper[skola].append(flytt)
+                    break
+
+    # ===== ROTATION =====
     def next_school(sk, step=1):
         i = skol_lista.index(sk)
-        return skol_lista[(i+step) % len(skol_lista)]
+        return skol_lista[(i + step) % len(skol_lista)]
 
-    # ===== ÅR2 =====
-    for grupp in grupper:
-        A = year[1][grupp[0]]
-        B = next_school(A)
+    for skola, grupp in grupper.items():
+
+        B = next_school(skola, 1)
+        C = next_school(skola, 2)
 
         for s in grupp:
             year[2][s] = B
-
-    # ===== ÅR3 =====
-    year[3] = year[2].copy()
-
-    # ===== ÅR4 =====
-    for grupp in grupper:
-        B = year[2][grupp[0]]
-        C = next_school(B)
-
-        for s in grupp:
+            year[3][s] = B
             year[4][s] = C
 
-
-    # ===== BYGG SKOLVY =====
+    # ===== SKOLVY =====
     school_data = {}
 
     for s in student_names:
-        for y in ["År1","År2","År3","År4"]:
-            sk = year[int(y[-1])][s]
+        for y in [1,2,3,4]:
+            sk = year[y][s]
 
-            school_data.setdefault(sk,{})
-            school_data[sk].setdefault(s,{
+            school_data.setdefault(sk, {})
+            school_data[sk].setdefault(s, {
                 "År1":"","År2":"","År3":"","År4":""
             })
 
-            school_data[sk][s][y] = s
+            school_data[sk][s][f"År{y}"] = s
+
 
     # ===== EXCEL =====
     wb = Workbook()
     ws = wb.active
+    ws.title = "Placeringar"
 
     fill = PatternFill(start_color="DDDDDD", fill_type="solid")
 
     ws.append(["Skola","År1","År2","År3","År4"])
 
-    for skola, max_p in kap.items():
+    for skola in sorted(kap.keys()):
+
+        max_p = int(kap.get(skola,0))
 
         ws.append([f"{skola} (max {max_p})"])
         r = ws.max_row
@@ -144,21 +145,20 @@ if system_file and form_file:
         ws.merge_cells(start_row=r,start_column=1,end_row=r,end_column=5)
 
         rows=[{"År1":"","År2":"","År3":"","År4":""}
-              for _ in range(int(max_p))]
+              for _ in range(max_p)]
 
-        i = 0
+        i=0
         if skola in school_data:
             for student,data in school_data[skola].items():
-                if i >= max_p:
+                if i>=max_p:
                     break
-                rows[i] = data
-                i += 1
+                rows[i]=data
+                i+=1
 
         for row in rows:
             ws.append(["",row["År1"],row["År2"],row["År3"],row["År4"]])
 
         ws.append([])
-
 
     # ===== RAPPORT =====
     ws2 = wb.create_sheet("Rapport")
@@ -190,3 +190,6 @@ if system_file and form_file:
 
     with open(file,"rb") as f:
         st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
+
+else:
+    st.info("Ladda upp båda filer")
