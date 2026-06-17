@@ -36,11 +36,14 @@ if system_file and form_file:
 
     skolor["Region"] = skolor["Partnerområde"].apply(get_region)
 
-    kap = {
-        r["Skolenhet"]: int(r["Antal platser"])
-        for _, r in skolor.iterrows()
-        if pd.notna(r["Antal platser"]) and int(r["Antal platser"]) > 0
-    }
+    kap = {}
+    for _, r in skolor.iterrows():
+        try:
+            k = int(r["Antal platser"])
+        except:
+            k = 0
+        if k > 0:
+            kap[r["Skolenhet"]] = k
 
     skol_lista = list(kap.keys())
 
@@ -57,40 +60,57 @@ if system_file and form_file:
     students["Region"] = students[bost].apply(get_region)
 
 
-    # ===== BYGG PLATS-RADER =====
+    # ===== SKAPA PLATS-RADER =====
     rows = []
 
     for _, r in skolor.iterrows():
         skola = r["Skolenhet"]
+        region = r["Region"]
         k = int(r["Antal platser"])
 
         for _ in range(k):
             rows.append({
                 "Skola": skola,
-                "Region": r["Region"],
-                "År1": None,
-                "År2": None,
-                "År3": None,
-                "År4": None
+                "Region": region,
+                "År1": "",
+                "År2": "",
+                "År3": "",
+                "År4": ""
             })
 
 
     not_placed = []
 
     # ===== FÖRDELA PER REGION =====
-    for region in ["Kalmar", "Oskarshamn", "Karlskrona"]:
+    for region in ["Kalmar","Oskarshamn","Karlskrona"]:
 
         rows_r = [r for r in rows if r["Region"] == region]
+        skolor_r = list(dict.fromkeys([r["Skola"] for r in rows_r]))
         stud_r = list(students[students["Region"] == region]["Namn"])
 
         if not rows_r:
             not_placed += stud_r
             continue
 
+        # ✅ SPRID STUDENTER ÖVER SKOLOR
+        allocation = []
+        i = 0
+
+        while i < len(stud_r):
+            for skola in skolor_r:
+                if i >= len(stud_r):
+                    break
+                allocation.append((stud_r[i], skola))
+                i += 1
+
+        # bygg lista för år1
+        stud_order = [a[0] for a in allocation]
+
+        # rotation
         def rotate(lst, n):
             return lst[n:] + lst[:n]
 
-        names1 = stud_r[:len(rows_r)]
+        names1 = stud_order[:len(rows_r)]
         names2 = rotate(names1, 1)
         names4 = rotate(names1, 2)
 
@@ -101,11 +121,6 @@ if system_file and form_file:
                 row["År2"] = names2[i]
                 row["År3"] = names2[i]
                 row["År4"] = names4[i]
-            else:
-                row["År1"] = ""
-                row["År2"] = ""
-                row["År3"] = ""
-                row["År4"] = ""
 
         if len(stud_r) > len(rows_r):
             not_placed += stud_r[len(rows_r):]
@@ -120,20 +135,19 @@ if system_file and form_file:
 
     ws.append(["Skola","År1","År2","År3","År4"])
 
-    # ===== REGION BLOK =====
-    for region in ["Kalmar", "Oskarshamn", "Karlskrona"]:
+    for region in ["Kalmar","Oskarshamn","Karlskrona"]:
 
         ws.append([f"--- {region.upper()} ---"])
-        ws.cell(ws.max_row, 1).font = header_font
+        ws.cell(ws.max_row,1).font = header_font
 
-        skolor_region = skolor[skolor["Region"] == region]["Skolenhet"]
+        skolor_region = skolor[skolor["Region"]==region]["Skolenhet"]
 
         for skola in skolor_region:
 
-            max_p = kap.get(skola, 0)
+            max_p = kap.get(skola,0)
             ws.append([f"{skola} (max {max_p})"])
 
-            rows_s = [r for r in rows if r["Skola"] == skola]
+            rows_s = [r for r in rows if r["Skola"]==skola]
 
             for r in rows_s:
                 ws.append(["", r["År1"], r["År2"], r["År3"], r["År4"]])
