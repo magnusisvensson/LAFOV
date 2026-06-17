@@ -56,27 +56,20 @@ if system_file and form_file:
     students["Namn"] = students[fn] + " " + students[ln]
     students["Region"] = students[bost].apply(get_region)
 
-    # ===== SKAPA PLATSRADER =====
+    # ===== PLATSER =====
     rows = []
 
     for _, r in skolor.iterrows():
-        skola = r["Skolenhet"]
-        region = r["Region"]
-        k = int(r["Antal platser"])
-
-        for _ in range(k):
+        for _ in range(int(r["Antal platser"])):
             rows.append({
-                "Skola": skola,
-                "Region": region,
-                "År1": "",
-                "År2": "",
-                "År3": "",
-                "År4": ""
+                "Skola": r["Skolenhet"],
+                "Region": r["Region"],
+                "År1": "", "År2": "", "År3": "", "År4": ""
             })
 
     not_placed = []
 
-    # ===== FÖRDELA PER REGION =====
+    # ===== FÖRDELNING =====
     for region in ["Kalmar","Oskarshamn","Karlskrona"]:
 
         rows_r = [r for r in rows if r["Region"] == region]
@@ -90,37 +83,46 @@ if system_file and form_file:
         def rotate(lst, n):
             return lst[n:] + lst[:n]
 
-        # ✅ ABAB-FÖRDELNING (KRITISK FIX)
-        names_by_school = []
+        # ABAB-grundfördelning av skolor
+        school_seq = []
         i = 0
+        while len(school_seq) < len(rows_r):
+            school_seq.append(skolor_r[i % len(skolor_r)])
+            i += 1
 
-        while i < len(stud_r):
-            for skola in skolor_r:
-                if i >= len(stud_r):
-                    break
-                names_by_school.append((stud_r[i], skola))
-                i += 1
+        names1 = stud_r[:len(rows_r)]
 
-        # ✅ FÖRDELA KORREKT PER SKOLA
-        for skola in skolor_r:
+        # ✅ LOGIKVAL
+        if len(skolor_r) <= 2:
+            # ===== ABAB =====
+            schools_y1 = school_seq
+            schools_y2 = rotate(school_seq, 1)
+            schools_y3 = schools_y2
+            schools_y4 = rotate(school_seq, 0)
 
-            rows_skola = [r for r in rows_r if r["Skola"] == skola]
-            stud_skola = [s for (s, sk) in names_by_school if sk == skola]
+        else:
+            # ===== ABBC =====
+            schools_y1 = school_seq
+            schools_y2 = rotate(school_seq, 1)
+            schools_y3 = schools_y2
+            schools_y4 = rotate(school_seq, 2)
 
-            names1 = stud_skola[:len(rows_skola)]
-            names2 = rotate(names1, 1)
-            names4 = rotate(names1, 2)
+        names2 = rotate(names1, 1)
+        names4 = rotate(names1, 2)
 
-            for i, row in enumerate(rows_skola):
-                if i < len(names1):
+        for i, row in enumerate(rows_r):
+            if i < len(names1):
+                if schools_y1[i] == row["Skola"]:
                     row["År1"] = names1[i]
+                if schools_y2[i] == row["Skola"]:
                     row["År2"] = names2[i]
+                if schools_y3[i] == row["Skola"]:
                     row["År3"] = names2[i]
+                if schools_y4[i] == row["Skola"]:
                     row["År4"] = names4[i]
 
-        # ej placerade
-        if len(stud_r) > len(names_by_school):
-            not_placed += stud_r[len(names_by_school):]
+        if len(stud_r) > len(rows_r):
+            not_placed += stud_r[len(rows_r):]
 
     # ===== EXCEL =====
     wb = Workbook()
@@ -139,14 +141,11 @@ if system_file and form_file:
         skolor_region = skolor[skolor["Region"] == region]["Skolenhet"]
 
         for skola in skolor_region:
+            ws.append([f"{skola} (max {kap[skola]})"])
 
-            max_p = kap.get(skola, 0)
-            ws.append([f"{skola} (max {max_p})"])
-
-            rows_s = [r for r in rows if r["Skola"] == skola]
-
-            for r in rows_s:
-                ws.append(["", r["År1"], r["År2"], r["År3"], r["År4"]])
+            for r in rows:
+                if r["Skola"] == skola:
+                    ws.append(["", r["År1"], r["År2"], r["År3"], r["År4"]])
 
             ws.append([])
 
@@ -157,15 +156,12 @@ if system_file and form_file:
     ws2.append(["Student","Status"])
 
     for s in students["Namn"]:
-        if s in not_placed:
-            ws2.append([s,"EJ PLACERAD"])
-        else:
-            ws2.append([s,"OK"])
+        ws2.append([s, "EJ PLACERAD" if s in not_placed else "OK"])
 
     file = "kull_resultat.xlsx"
     wb.save(file)
 
-    with open(file,"rb") as f:
+    with open(file, "rb") as f:
         st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
 
 else:
