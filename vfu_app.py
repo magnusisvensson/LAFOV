@@ -56,7 +56,7 @@ if system_file and form_file:
     students["Namn"] = students[fn] + " " + students[ln]
     students["Region"] = students[bost].apply(get_region)
 
-    # ===== BYGG PLATSER =====
+    # ===== SKAPA PLATS-RADER =====
     rows = []
     for _, r in skolor.iterrows():
         for _ in range(int(r["Antal platser"])):
@@ -67,9 +67,6 @@ if system_file and form_file:
             })
 
     not_placed = []
-
-    def rotate(lst, n):
-        return lst[n:] + lst[:n]
 
     # ===== KÄRNLOGIK =====
     for region in ["Kalmar","Oskarshamn","Karlskrona"]:
@@ -83,51 +80,61 @@ if system_file and form_file:
             not_placed += stud_r
             continue
 
-        n = len(rows_r)
+        # kapacitet per skola
+        kapasitet = {sk: 0 for sk in skolor_r}
+        for r in rows_r:
+            kapasitet[r["Skola"]] += 1
 
-        # vilka får plats
-        students_used = stud_r[:n]
-        not_placed += stud_r[n:]
+        # hur mycket som används
+        usage = {
+            sk: {"År1":0,"År2":0,"År3":0,"År4":0}
+            for sk in skolor_r
+        }
 
-        # skapa skolfördelning (ABAB grund)
-        school_seq = []
-        i = 0
-        while len(school_seq) < n:
-            school_seq.append(skolor_r[i % len(skolor_r)])
-            i += 1
+        for i, student in enumerate(stud_r):
 
-        # rotationsregler
-        if len(skolor_r) <= 2:
-            # ABAB
-            schools_y1 = school_seq
-            schools_y2 = rotate(school_seq, 1)
-            schools_y3 = schools_y2
-            schools_y4 = school_seq
-        else:
-            # ABBC
-            schools_y1 = school_seq
-            schools_y2 = rotate(school_seq, 1)
-            schools_y3 = schools_y2
-            schools_y4 = rotate(school_seq, 2)
+            A = skolor_r[i % len(skolor_r)]
 
-        names_y1 = students_used
-        names_y2 = rotate(students_used, 1)
-        names_y3 = names_y2
-        names_y4 = rotate(students_used, 2)
+            if len(skolor_r) <= 2:
+                # ABAB
+                B = skolor_r[(skolor_r.index(A)+1) % len(skolor_r)]
+                schedule = {
+                    "År1": A,
+                    "År2": B,
+                    "År3": A,
+                    "År4": B
+                }
+            else:
+                # ABBC
+                B = skolor_r[(skolor_r.index(A)+1) % len(skolor_r)]
+                C = skolor_r[(skolor_r.index(A)+2) % len(skolor_r)]
+                schedule = {
+                    "År1": A,
+                    "År2": B,
+                    "År3": B,
+                    "År4": C
+                }
 
-        # ✅ robust placering (ingen indexbugg)
-        def assign(school, year, student):
-            for r in rows_r:
-                if r["Skola"] == school and r[year] == "":
-                    r[year] = student
-                    return
+            # kolla plats finns
+            ok = True
+            for year in schedule:
+                if usage[schedule[year]][year] >= kapasitet[schedule[year]]:
+                    ok = False
+                    break
 
-        # ✅ KRITISK FIX: loopa bara över studenter
-        for i in range(len(students_used)):
-            assign(schools_y1[i], "År1", names_y1[i])
-            assign(schools_y2[i], "År2", names_y2[i])
-            assign(schools_y3[i], "År3", names_y3[i])
-            assign(schools_y4[i], "År4", names_y4[i])
+            if not ok:
+                not_placed.append(student)
+                continue
+
+            # tilldela
+            for year in ["År1","År2","År3","År4"]:
+                sk = schedule[year]
+
+                for r in rows_r:
+                    if r["Skola"] == sk and r[year] == "":
+                        r[year] = student
+                        usage[sk][year] += 1
+                        break
 
     # ===== EXCEL =====
     wb = Workbook()
