@@ -1,20 +1,11 @@
-import streamlit as stimport streamlit as Font, PatternFill, Alignment
-``
-import pandas as pd
 
-from openpyxl import Workbook
-
-
-
-st.title("VFU-placeringssystem")
-
-system_file = st.file_uploader("1. Översiktsfil", type=["xlsx"])
-form_file = st.file_uploader("2. Formulärsvar", type=["xlsx"])
+import streamlit as stimport streamlit as Formulärsvar", type=["xlsx"])
 
 kull = st.number_input("Kull", value=26)
 program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
 
 
+# ===== REGION =====
 def get_region(text):
     t = str(text).lower()
     if "oskarshamn" in t:
@@ -26,17 +17,18 @@ def get_region(text):
 
 if system_file and form_file:
 
+    # ===== SKOLOR =====
     skolor = pd.read_excel(system_file)
     skolor.columns = skolor.columns.str.strip()
 
     skolor = skolor[
         (skolor["Kull"] == kull) &
         (skolor["Inriktning"].str.upper() == program)
-    ]
+    ].copy()
 
     skolor["Region"] = skolor["Partnerområde"].apply(get_region)
 
-    # ✅ kap med ?
+    # ✅ kap med stöd för "?"
     kap = {}
     for _, r in skolor.iterrows():
         try:
@@ -44,6 +36,7 @@ if system_file and form_file:
         except:
             kap[r["Skolenhet"]] = "?"
 
+    # ===== STUDENTER =====
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
 
@@ -54,6 +47,7 @@ if system_file and form_file:
     students["Namn"] = students[fn] + " " + students[ln]
     students["Region"] = students[bost].apply(get_region)
 
+    # ===== BYGG PLATSER =====
     rows = []
     for _, r in skolor.iterrows():
 
@@ -68,6 +62,105 @@ if system_file and form_file:
                 "Region": r["Region"],
                 "År1": "", "År2": "", "År3": "", "År4": ""
             })
+
+    # ===== PLACERING =====
+    for region in ["Kalmar","Oskarshamn","Karlskrona"]:
+
+        rows_r = [r for r in rows if r["Region"] == region]
+        stud_r = list(students[students["Region"] == region]["Namn"])
+        skolor_r = list(dict.fromkeys([r["Skola"] for r in rows_r]))
+
+        if not rows_r:
+            continue
+
+        kapasitet = {sk: 0 for sk in skolor_r}
+        for r in rows_r:
+            kapasitet[r["Skola"]] += 1
+
+        usage = {
+            sk: {"År1":0,"År2":0,"År3":0,"År4":0}
+            for sk in skolor_r
+        }
+
+        # ✅ perfekt rotation först
+        def try_place(student, start_index):
+
+            A = skolor_r[start_index]
+
+            if len(skolor_r) <= 2:
+                B = skolor_r[(start_index+1) % len(skolor_r)]
+                schedule = {"År1":A,"År2":B,"År3":A,"År4":B}
+            else:
+                B = skolor_r[(start_index+1) % len(skolor_r)]
+                C = skolor_r[(start_index+2) % len(skolor_r)]
+                schedule = {"År1":A,"År2":B,"År3":B,"År4":C}
+
+            # kolla kapacitet
+            for y in schedule:
+                if usage[schedule[y]][y] >= kapasitet[schedule[y]]:
+                    return False
+
+            # tilldela
+            for year, sk in schedule.items():
+                for r in rows_r:
+                    if r["Skola"] == sk and r[year] == "":
+                        r[year] = student
+                        usage[sk][year] += 1
+                        break
+
+            return True
+
+        # ✅ SMART FALLBACK (sprider placeringar)
+        def fallback_place(student):
+
+            used = []
+
+            for year in ["År1","År2","År3","År4"]:
+
+                placed = False
+
+                # försök NYA skolor först
+                for sk in skolor_r:
+                    if sk in used:
+                        continue
+
+                    if usage[sk][year] < kapasitet[sk]:
+                        for r in rows_r:
+                            if r["Skola"] == sk and r[year] == "":
+                                r[year] = student
+                                usage[sk][year] += 1
+                                used.append(sk)
+                                placed = True
+                                break
+                    if placed:
+                        break
+
+                # fallback (tillåt repetition)
+                if not placed:
+                    for sk in skolor_r:
+                        if usage[sk][year] < kapasitet[sk]:
+                            for r in rows_r:
+                                if r["Skola"] == sk and r[year] == "":
+                                    r[year] = student
+                                    usage[sk][year] += 1
+                                    placed = True
+                                    break
+                        if placed:
+                            break
+
+
+        # kör
+        for i, student in enumerate(stud_r):
+
+            placed = False
+
+            for shift in range(len(skolor_r)):
+                if try_place(student, (i+shift) % len(skolor_r)):
+                    placed = True
+                    break
+
+            if not placed:
+                fallback_place(student)
 
     # ===== EXCEL =====
     wb = Workbook()
@@ -86,6 +179,7 @@ if system_file and form_file:
         "Skola": PatternFill("solid", fgColor="E7E7E7"),
         "Header": PatternFill("solid", fgColor="CCCCCC"),
         "Warning": PatternFill("solid", fgColor="FFC7CE"),
+        "WarningLight": PatternFill("solid", fgColor="FFECEC"),
     }
 
     ws.append(["Skola","År1","År2","År3","År4"])
@@ -121,21 +215,57 @@ if system_file and form_file:
 
             for c in range(1,6):
                 cell = ws.cell(row_idx,c)
-                cell.font = bold
 
                 if is_unknown:
                     cell.fill = fills["Warning"]
+                    cell.font = Font(bold=True, color="9C0006")
                 else:
                     cell.fill = fills["Skola"]
+                    cell.font = bold
 
             row_idx += 1
 
-    wb.save("kull_resultat.xlsx")
+            for r in rows:
+                if r["Skola"] == skola:
+                    ws.append(["", r["År1"], r["År2"], r["År3"], r["År4"]])
 
-    with open("kull_resultat.xlsx","rb") as f:
-        st.download_button("⬇️ Ladda ner Excel", f)
+                    for c in range(2,6):
+                        cell = ws.cell(row_idx,c)
+                        cell.alignment = left
+
+                        if is_unknown:
+                            cell.fill = fills["WarningLight"]
+
+                    row_idx += 1
+
+            ws.append([])
+            row_idx += 1
+
+    # kolumnbredd
+    for col in ws.columns:
+        max_len = 0
+        col_letter = col[0].column_letter
+
+        for cell in col:
+            if cell.value:
+                max_len = max(max_len, len(str(cell.value)))
+
+        ws.column_dimensions[col_letter].width = max(max_len + 4, 14)
+
+    file = "kull_resultat.xlsx"
+    wb.save(file)
+
+    with open(file, "rb") as f:
+        st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
 
 else:
     st.info("Ladda upp båda filer")
 import pandas as pd
 
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
+
+
+st.title("VFU-placeringssystem")
+
+system_file = st.file_uploader("1. Översiktsfil", type=["xlsx"])
