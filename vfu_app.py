@@ -1,4 +1,8 @@
-import streamlit as stimport streamlit as Formulärsvar", type=["xlsx"])
+import streamlit as st
+import pandas as pd
+
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
 
 kull = st.number_input("Kull", value=26)
 program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
