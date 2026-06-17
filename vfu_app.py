@@ -13,6 +13,7 @@ kull = st.number_input("Kull", value=26)
 program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
 
 
+# ===== REGION =====
 def get_region(text):
     t = str(text).lower()
     if "oskarshamn" in t:
@@ -44,6 +45,7 @@ if system_file and form_file:
         if k > 0:
             kap[r["Skolenhet"]] = k
 
+    # ===== STUDENTER =====
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
 
@@ -54,6 +56,7 @@ if system_file and form_file:
     students["Namn"] = students[fn] + " " + students[ln]
     students["Region"] = students[bost].apply(get_region)
 
+    # ===== BYGG ALLA PLATSER =====
     rows = []
     for _, r in skolor.iterrows():
         for _ in range(int(r["Antal platser"])):
@@ -82,60 +85,50 @@ if system_file and form_file:
 
         n = len(rows_r)
 
+        # vilka får plats
         students_used = stud_r[:n]
         not_placed += stud_r[n:]
 
-        # ✅ SKOL-SEKVENS
+        # skapa sekvens av skolor (ABAB fördelning)
         school_seq = []
         i = 0
         while len(school_seq) < n:
             school_seq.append(skolor_r[i % len(skolor_r)])
             i += 1
 
-        # ✅ ROTATION PER REGION
+        # 🔵 välj rotationstyp
         if len(skolor_r) <= 2:
+            # ABAB
             schools_y1 = school_seq
             schools_y2 = rotate(school_seq, 1)
             schools_y3 = schools_y2
             schools_y4 = school_seq
         else:
+            # ABBC
             schools_y1 = school_seq
             schools_y2 = rotate(school_seq, 1)
             schools_y3 = schools_y2
             schools_y4 = rotate(school_seq, 2)
 
+        # studentrotation
         names_y1 = students_used
         names_y2 = rotate(students_used, 1)
         names_y3 = names_y2
         names_y4 = rotate(students_used, 2)
 
-        # ✅ SKAPA TOMMAPER SKOLA
-        school_rows = {sk: [] for sk in skolor_r}
-        for row in rows_r:
-            school_rows[row["Skola"]].append(row)
+        # ✅ robust tilldelning (INGEN INDEXERROR)
+        def assign(school, year, student):
+            for r in rows_r:
+                if r["Skola"] == school and r[year] == "":
+                    r[year] = student
+                    return
 
-        counters = {sk: 0 for sk in skolor_r}
-
-        # ✅ FYLL RÄTT RADER
         for i in range(n):
+            assign(schools_y1[i], "År1", names_y1[i])
+            assign(schools_y2[i], "År2", names_y2[i])
+            assign(schools_y3[i], "År3", names_y3[i])
+            assign(schools_y4[i], "År4", names_y4[i])
 
-            sk1 = schools_y1[i]
-            idx = counters[sk1]
-            if idx < len(school_rows[sk1]):
-                school_rows[sk1][idx]["År1"] = names_y1[i]
-
-            sk2 = schools_y2[i]
-            idx = counters[sk2]
-            if idx < len(school_rows[sk2]):
-                school_rows[sk2][idx]["År2"] = names_y2[i]
-                school_rows[sk2][idx]["År3"] = names_y3[i]
-
-            sk4 = schools_y4[i]
-            idx = counters[sk4]
-            if idx < len(school_rows[sk4]):
-                school_rows[sk4][idx]["År4"] = names_y4[i]
-
-            counters[sk1] += 1
 
     # ===== EXCEL =====
     wb = Workbook()
@@ -147,8 +140,12 @@ if system_file and form_file:
     for region in ["Kalmar","Oskarshamn","Karlskrona"]:
 
         ws.append([f"--- {region.upper()} ---"])
+        ws.cell(ws.max_row,1).font = Font(bold=True)
 
-        for skola in skolor[skolor["Region"]==region]["Skolenhet"]:
+        skolor_region = skolor[skolor["Region"] == region]["Skolenhet"]
+
+        for skola in skolor_region:
+
             ws.append([f"{skola} (max {kap[skola]})"])
 
             for r in rows:
@@ -159,17 +156,19 @@ if system_file and form_file:
 
         ws.append([])
 
+    # ===== RAPPORT =====
     ws2 = wb.create_sheet("Rapport")
     ws2.append(["Student","Status"])
 
     for s in students["Namn"]:
-        ws2.append([s, "EJ PLACERAD" if s in not_placed else "OK"])
+        status = "EJ PLACERAD" if s in not_placed else "OK"
+        ws2.append([s, status])
 
-    file="kull_resultat.xlsx"
+    file = "kull_resultat.xlsx"
     wb.save(file)
 
     with open(file,"rb") as f:
-        st.download_button("⬇️ Ladda ner", f, file_name=file)
+        st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
 
 else:
     st.info("Ladda upp båda filer")
