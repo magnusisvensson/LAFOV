@@ -13,7 +13,6 @@ kull = st.number_input("Använd skolor planerade för kull:", value=26)
 program = st.selectbox("Inom program:", ["LAFOV","LAGRV","LGFRI"])
 
 
-# ===== REGION =====
 def get_region(text):
     t = str(text).lower()
     if "kalmar" in t: return "Kalmar"
@@ -33,7 +32,6 @@ if system_file and form_file:
         (skolor["Inriktning"].str.upper() == program)
     ].copy()
 
-    # robust kapacitet
     kap = {}
     for _, r in skolor.iterrows():
         try:
@@ -43,7 +41,7 @@ if system_file and form_file:
 
     skol_lista = [s for s in kap if kap[s] > 0]
 
-    # skolregion
+    # region skola
     if "Partnerområde" in skolor.columns:
         skolor["Region"] = skolor["Partnerområde"].apply(get_region)
     else:
@@ -62,15 +60,14 @@ if system_file and form_file:
 
     student_names = list(students["Namn"])
 
-
-    # ===== ÅR1 – FULL TÄCKNING =====
+    # ===== ÅR1 (FULL TÄCKNING) =====
     year = {1:{},2:{},3:{},4:{}}
 
     slots = []
     for skola, max_p in kap.items():
         slots += [skola] * int(max_p)
 
-    # 🔥 säkerställ tillräckligt med platser
+    # 🔥 garantera att ALLA får plats
     while len(slots) < len(student_names):
         slots += skol_lista
 
@@ -78,7 +75,7 @@ if system_file and form_file:
         year[1][student] = slots[i]
 
 
-    # ===== SKAPA GRUPPER (FRÅN ÅR1) =====
+    # ===== BYGG GRUPPER =====
     grupper = {}
     for s, sk in year[1].items():
         grupper.setdefault(sk, []).append(s)
@@ -87,22 +84,24 @@ if system_file and form_file:
     # ===== FIXA ENSAMMA =====
     for skola, grupp in list(grupper.items()):
         if len(grupp) == 1:
-            ensam = grupp[0]
 
-            # hitta grupp med minst 3
             for sk2, grp2 in grupper.items():
                 if sk2 != skola and len(grp2) >= 3:
                     flytt = grp2.pop()
                     grupper[skola].append(flytt)
-                    grupper[sk2] = grp2
                     break
+
+
+    # ✅ KRITISK FIX: SYNKA TILLBAKA TILL ÅR1
+    for skola, grupp in grupper.items():
+        for s in grupp:
+            year[1][s] = skola
 
 
     # ===== ROTATION =====
     def next_school(skola, step=1):
         i = skol_lista.index(skola)
         return skol_lista[(i + step) % len(skol_lista)]
-
 
     for skola, grupp in grupper.items():
 
@@ -139,7 +138,9 @@ if system_file and form_file:
 
     ws.append(["Skola","År1","År2","År3","År4"])
 
-    for skola, max_p in kap.items():
+    for skola in sorted(kap.keys()):
+
+        max_p = int(kap.get(skola,0))
 
         ws.append([f"{skola} (max {max_p})"])
         r = ws.max_row
@@ -150,16 +151,16 @@ if system_file and form_file:
 
         ws.merge_cells(start_row=r,start_column=1,end_row=r,end_column=5)
 
-        rows=[{"År1":"","År2":"","År3":"","År4":""}
-              for _ in range(int(max_p))]
+        # ✅ undvik dubletter
+        students_here = list(dict.fromkeys(
+            school_data.get(skola, {}).keys()
+        ))
 
-        i=0
-        if skola in school_data:
-            for student,data in school_data[skola].items():
-                if i>=max_p:
-                    break
-                rows[i]=data
-                i+=1
+        rows=[{"År1":"","År2":"","År3":"","År4":""}
+              for _ in range(max_p)]
+
+        for i, student in enumerate(students_here[:max_p]):
+            rows[i] = school_data[skola][student]
 
         for row in rows:
             ws.append(["",row["År1"],row["År2"],row["År3"],row["År4"]])
@@ -200,3 +201,4 @@ if system_file and form_file:
 
 else:
     st.info("Ladda upp båda filer")
+``
