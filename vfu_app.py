@@ -2,6 +2,8 @@
 import streamlit as st
 import pandas as pd
 
+import unicodedata
+
 st.title("VFU-placeringssystem")
 
 system_file = st.file_uploader("1. Översiktsfil", type=["xlsx"])
