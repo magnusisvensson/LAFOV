@@ -1,7 +1,6 @@
 
 import streamlit as st
 import pandas as pd
-
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 
@@ -15,9 +14,6 @@ kull = st.number_input("Kull", value=26)
 program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
 
 
-# =========================
-# REGION
-# =========================
 def get_region(text):
     t = str(text).lower()
 
@@ -36,7 +32,7 @@ def get_region(text):
 if system_file and form_file:
 
     # =========================
-    # LÄS SKOLOR
+    # DATA
     # =========================
     skolor = pd.read_excel(system_file)
     skolor.columns = skolor.columns.str.strip()
@@ -48,9 +44,7 @@ if system_file and form_file:
 
     skolor["Region"] = skolor["Partnerområde"].apply(get_region)
 
-    # =========================
-    # KAPACITET
-    # =========================
+    # kapacitet
     kap = {}
     kap_osaker = {}
 
@@ -68,6 +62,7 @@ if system_file and form_file:
             kap[r["Skolenhet"]] = 2
             kap_osaker[r["Skolenhet"]] = True
 
+
     # =========================
     # STUDENTER
     # =========================
@@ -83,7 +78,7 @@ if system_file and form_file:
     alt = find_col("alternativ")
     pref = find_col("utgå")
 
-    students["Namn"] = students[fn] + " " + students[ln]
+    students["Namn"] = (students[fn] + " " + students[ln]).str.strip()
 
     def choose_loc(row):
         if "alternativ" in str(row[pref]).lower():
@@ -92,9 +87,7 @@ if system_file and form_file:
 
     students["ChosenOrt"] = students.apply(choose_loc, axis=1)
 
-    # =========================
-    # REGIONVAL (OSÄKER ORT)
-    # =========================
+    # region
     regions = []
 
     for _, row in students.iterrows():
@@ -112,8 +105,9 @@ if system_file and form_file:
 
     students["Region"] = regions
 
+
     # =========================
-    # SKAPA PLATSER
+    # PLATSER
     # =========================
     rows = []
 
@@ -125,20 +119,20 @@ if system_file and form_file:
                 "År1":"","År2":"","År3":"","År4":""
             })
 
+
     # =========================
-    # PLACERING (GARANTERAR ALLA)
+    # PLACERING (alla får plats)
     # =========================
     for region in ["Kalmar","Oskarshamn","Karlskrona"]:
 
-        rows_r = [r for r in rows if r["Region"] == region]
-        stud_r = list(students[students["Region"] == region]["Namn"])
+        rows_r = [r for r in rows if r["Region"]==region]
+        stud_r = list(students[students["Region"]==region]["Namn"])
         skolor_r = list(dict.fromkeys([r["Skola"] for r in rows_r]))
 
         for student in stud_r:
 
             placed = False
 
-            # ✅ försök hitta ledig plats
             for sk in skolor_r:
                 for r in rows_r:
                     if r["Skola"] == sk and r["År1"] == "":
@@ -148,7 +142,6 @@ if system_file and form_file:
                 if placed:
                     break
 
-            # ✅ fallback (alla får plats)
             if not placed and len(rows_r) > 0:
                 rows_r[0]["År1"] = student
 
@@ -162,7 +155,11 @@ if system_file and form_file:
 
     if student_input:
 
-        match = students[students["Namn"].str.lower() == student_input.lower()]
+        input_name = student_input.strip().lower()
+
+        match = students[
+            students["Namn"].str.strip().str.lower() == input_name
+        ]
 
         if len(match) == 0:
             st.warning("Student hittades inte")
@@ -170,19 +167,26 @@ if system_file and form_file:
         else:
             sr = match.iloc[0]
 
-            st.write(f"Bostadsort: {sr['ChosenOrt']}")
+            st.write(f"**Bostadsort:** {sr['ChosenOrt']}")
+
+            found = False
 
             for r in rows:
                 for year in ["År1","År2","År3","År4"]:
                     if r[year] == sr["Namn"]:
 
+                        found = True
+
                         st.write(f"{year}: {r['Skola']}")
 
                         st.radio(
-                            "OK pendling?",
+                            f"Pendling OK för {year}?",
                             ["Ja","Nej"],
-                            key=f"{student_input}_{year}"
+                            key=f"{input_name}_{year}"
                         )
+
+            if not found:
+                st.error("Studenten har ingen placering ännu")
 
 
     # =========================
@@ -192,72 +196,35 @@ if system_file and form_file:
     ws = wb.active
     ws.title = "Placeringar"
 
-    fills = {
-        "Header": PatternFill("solid","CCCCCC"),
-        "Region": PatternFill("solid","D9EAF7"),
-        "Skola": PatternFill("solid","E7E7E7")
-    }
-
     ws.append(["Skola","År1","År2","År3"])
 
-    for c in range(1,5):
-        cell = ws.cell(1,c)
-        cell.fill = fills["Header"]
-        cell.font = Font(bold=True)
-        cell.alignment = Alignment(horizontal="center")
+    for skola in skolor["Skolenhet"]:
 
-    for region in ["Kalmar","Oskarshamn","Karlskrona"]:
+        label = f"{skola} (max {kap[skola]})"
+
+        if kap_osaker[skola]:
+            label += " ⚠ osäker"
+
+        ws.append([label])
+
+        school_rows = [r for r in rows if r["Skola"]==skola]
+
+        if len(school_rows) == 0:
+            ws.append(["","","",""])
+        else:
+            for r in school_rows:
+                ws.append(["",r["År1"],r["År2"],r["År3"]])
 
         ws.append([])
-        ws.append([region.upper()])
-        row = ws.max_row
-
-        ws.merge_cells(start_row=row,start_column=1,end_row=row,end_column=4)
-
-        for c in range(1,5):
-            ws.cell(row,c).fill = fills["Region"]
-
-        ws.append([])
-
-        region_schools = skolor[skolor["Region"]==region]["Skolenhet"]
-
-        for skola in region_schools:
-
-            label = f"{skola} (max {kap[skola]})"
-            if kap_osaker[skola]:
-                label += " ⚠ osäker"
-
-            ws.append([label])
-
-            school_rows = [r for r in rows if r["Skola"]==skola]
-
-            if len(school_rows) == 0:
-                ws.append(["","","",""])
-            else:
-                for r in school_rows:
-                    ws.append(["",r["År1"],r["År2"],r["År3"]])
-
-            ws.append([])
-
-    # auto width
-    for col in ws.columns:
-        max_len = max(len(str(cell.value)) if cell.value else 0 for cell in col)
-        ws.column_dimensions[col[0].column_letter].width = max_len + 2
 
 
-    # =========================
-    # BLAD 2
-    # =========================
-    ws2 = wb.create_sheet("Studenter")
-    ws2.append(["Student","Ort","År1","År2/3","År4"])
+    file="kull_resultat.xlsx"
+    wb.save(file)
 
-    for _, s in students.iterrows():
-
-        p1=p2=p3=""
-
-        for r in rows:
-            if r["År1"]==s["Namn"]: p1=r["Skola"]
-            if r["År2"]==s["Namn"]: p2=r["Skola"]
-            if r["År4"]==s["Namn"]: p3=r["Skola"]
-
-        ws2.append([s["Namn"],s["ChosenOrt"],p1,p2,p3])
+    # ✅ EXPORTKNAPP (GARANTERAD)
+    with open(file,"rb") as f:
+        st.download_button(
+            "⬇️ Ladda ner Excel",
+            f,
+            file_name=file
+        )
