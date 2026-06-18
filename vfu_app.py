@@ -1,6 +1,6 @@
 
 import streamlit as st
-import pandas as in t:import pandas as pd
+import pandas as pd
         return "Oskarshamn"
 
     if any(x in t for x in ["karlskrona","ronneby","rödeby"]):
