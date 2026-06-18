@@ -2,7 +2,8 @@
 import streamlit as st
 import pandas as pd
 
-import unicodedata
+import Font, PatternFill, Alignment
+
 
 st.title("VFU-placeringssystem")
 
@@ -25,20 +26,10 @@ def get_region(text):
     return "Kalmar"
 
 
-# =========================
-# NORMALISERA TEXT ✅
-# =========================
-def normalize(text):
-    text = str(text).lower().strip()
-    text = unicodedata.normalize("NFKD", text)
-    text = "".join(c for c in text if not unicodedata.combining(c))
-    return text
-
-
 if system_file and form_file:
 
     # =========================
-    # LÄS DATA
+    # DATA
     # =========================
     skolor = pd.read_excel(system_file, engine="openpyxl")
     skolor.columns = skolor.columns.str.strip()
@@ -60,33 +51,26 @@ if system_file and form_file:
     students = pd.read_excel(form_file, engine="openpyxl")
     students.columns = students.columns.str.strip()
 
+
     # =========================
-    # ✅ SMART KOLUMNHANTERING
+    # ✅ ENKEL KOLUMNMATCHNING
     # =========================
-    def find_or_choose(label, keywords):
+    def find_col(label, keyword):
 
-        norm_cols = {col: normalize(col) for col in students.columns}
+        matches = [c for c in students.columns if keyword in c.lower()]
 
-        matches = []
-
-        for col, norm in norm_cols.items():
-            if any(normalize(k) in norm for k in keywords):
-                matches.append(col)
-
-        # ✅ hitta kolumn automatiskt
         if matches:
             return matches[0]
 
-        # ❗ annars fråga användaren
-        st.warning(f"Kunde inte hitta kolumn för '{label}'")
+        st.warning(f"Kunde inte hitta '{label}' – välj manuellt")
         return st.selectbox(label, students.columns, key=label)
 
 
-    fn = find_or_choose("Förnamn", ["förnamn","fornamn"])
-    ln = find_or_choose("Efternamn", ["efternamn"])
-    bost = find_or_choose("Bostadsort", ["bostadsort","bostad"])
-    alt_col = find_or_choose("Alternativ ort", ["alternativ"])
-    pref_col = find_or_choose("Val av ort", ["utgå","utga"])
+    fn = find_col("Förnamn", "förnamn")
+    ln = find_col("Efternamn", "efternamn")
+    bost = find_col("Bostadsort", "bostads")
+    alt_col = find_col("Alternativ ort", "alternativ")
+    pref_col = find_col("Val av ort", "utgå")
 
 
     students["Namn"] = students[fn] + " " + students[ln]
@@ -101,8 +85,9 @@ if system_file and form_file:
     students["ChosenOrt"] = students.apply(choose_loc, axis=1)
     students["Region"] = students["ChosenOrt"].apply(get_region)
 
+
     # =========================
-    # SKAPA PLATSER
+    # PLATSER
     # =========================
     rows = []
 
@@ -113,6 +98,7 @@ if system_file and form_file:
                 "Region": r["Region"],
                 "År1": "", "År2": "", "År3": "", "År4": ""
             })
+
 
     # =========================
     # PLACERING
@@ -147,7 +133,7 @@ if system_file and form_file:
 
             place(student,"År1",A)
 
-            for sk in [B]+skolor_r:
+            for sk in [B] + skolor_r:
                 if usage[sk]["År2"] < kap[sk] and usage[sk]["År3"] < kap[sk]:
                     if place(student,"År2",sk):
                         place(student,"År3",sk)
@@ -162,7 +148,7 @@ if system_file and form_file:
 
 
     # =========================
-    # PENDLING
+    # PENDLINGSKONTROLL
     # =========================
     st.subheader("🚶 Pendlingskontroll")
 
@@ -198,6 +184,7 @@ if system_file and form_file:
                 )
 
                 if val == "Nej":
+
                     alternatives = list(set([
                         r["Skola"] for r in rows
                         if r["Region"]==region and r["Skola"]!=skola
@@ -270,14 +257,14 @@ if system_file and form_file:
 
             ws.append([])
 
-    # ===== BLAD 2 =====
+    # BLAD 2
     ws2 = wb.create_sheet("Studenter")
     ws2.append(["Student","Bostad","Alt"])
 
     for _,s in students.iterrows():
         ws2.append([s["Namn"],s[bost],s[alt_col]])
 
-    # ===== BLAD 3 =====
+    # BLAD 3
     ws3 = wb.create_sheet("Kontroll")
     ws3.append(["Student","Antal skolor","Status"])
 
@@ -286,11 +273,11 @@ if system_file and form_file:
         skolset = set([r["Skola"] for r in rows if s["Namn"] in r.values()])
         antal = len(skolset)
 
-        if antal==0:
+        if antal == 0:
             status="SAKNAR"; color="FFC7CE"
-        elif antal==1:
+        elif antal == 1:
             status="EN"; color="FFD966"
-        elif antal==2:
+        elif antal == 2:
             status="OK"; color="FFEB9C"
         else:
             status="BRA"; color="C6EFCE"
@@ -301,7 +288,7 @@ if system_file and form_file:
         for c in range(1,4):
             ws3.cell(rN,c).fill = PatternFill("solid",color)
 
-    file="kull_resultat.xlsx"
+    file = "kull_resultat.xlsx"
     wb.save(file)
 
     with open(file,"rb") as f:
@@ -311,7 +298,7 @@ if system_file and form_file:
             file_name=file,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
 import pandas as pd
-import unicodedata
 
 from openpyxl import Workbook
