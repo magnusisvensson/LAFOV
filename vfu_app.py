@@ -2,11 +2,6 @@
 import streamlit as st
 import pandas as pd
 
-
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment
-
-
 st.title("VFU-placeringssystem")
 
 system_file = st.file_uploader("1. Översiktsfil", type=["xlsx"])
@@ -28,10 +23,20 @@ def get_region(text):
     return "Kalmar"
 
 
+# =========================
+# NORMALISERA TEXT ✅
+# =========================
+def normalize(text):
+    text = str(text).lower().strip()
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    return text
+
+
 if system_file and form_file:
 
     # =========================
-    # DATA
+    # LÄS DATA
     # =========================
     skolor = pd.read_excel(system_file, engine="openpyxl")
     skolor.columns = skolor.columns.str.strip()
@@ -53,31 +58,33 @@ if system_file and form_file:
     students = pd.read_excel(form_file, engine="openpyxl")
     students.columns = students.columns.str.strip()
 
-
     # =========================
-    # ✅ SMART KOLUMNVAL
+    # ✅ SMART KOLUMNHANTERING
     # =========================
     def find_or_choose(label, keywords):
 
-        matches = [
-            c for c in students.columns
-            if any(k in c.lower() for k in keywords)
-        ]
+        norm_cols = {col: normalize(col) for col in students.columns}
 
-        # ✅ hittad
-        if len(matches) >= 1:
+        matches = []
+
+        for col, norm in norm_cols.items():
+            if any(normalize(k) in norm for k in keywords):
+                matches.append(col)
+
+        # ✅ hitta kolumn automatiskt
+        if matches:
             return matches[0]
 
-        # ❗ annars fråga
-        st.warning(f"Kunde inte hitta kolumn för '{label}' – välj manuellt")
+        # ❗ annars fråga användaren
+        st.warning(f"Kunde inte hitta kolumn för '{label}'")
         return st.selectbox(label, students.columns, key=label)
 
 
-    fn = find_or_choose("Förnamn", ["förnamn","first"])
-    ln = find_or_choose("Efternamn", ["efternamn","last"])
-    bost = find_or_choose("Bostadsort", ["bostad","ort"])
+    fn = find_or_choose("Förnamn", ["förnamn","fornamn"])
+    ln = find_or_choose("Efternamn", ["efternamn"])
+    bost = find_or_choose("Bostadsort", ["bostadsort","bostad"])
     alt_col = find_or_choose("Alternativ ort", ["alternativ"])
-    pref_col = find_or_choose("Val av ort", ["utgå","helst"])
+    pref_col = find_or_choose("Val av ort", ["utgå","utga"])
 
 
     students["Namn"] = students[fn] + " " + students[ln]
@@ -92,9 +99,8 @@ if system_file and form_file:
     students["ChosenOrt"] = students.apply(choose_loc, axis=1)
     students["Region"] = students["ChosenOrt"].apply(get_region)
 
-
     # =========================
-    # PLATSER
+    # SKAPA PLATSER
     # =========================
     rows = []
 
@@ -105,7 +111,6 @@ if system_file and form_file:
                 "Region": r["Region"],
                 "År1": "", "År2": "", "År3": "", "År4": ""
             })
-
 
     # =========================
     # PLACERING
@@ -140,7 +145,7 @@ if system_file and form_file:
 
             place(student,"År1",A)
 
-            for sk in [B] + skolor_r:
+            for sk in [B]+skolor_r:
                 if usage[sk]["År2"] < kap[sk] and usage[sk]["År3"] < kap[sk]:
                     if place(student,"År2",sk):
                         place(student,"År3",sk)
@@ -155,7 +160,7 @@ if system_file and form_file:
 
 
     # =========================
-    # PENDLINGSKONTROLL
+    # PENDLING
     # =========================
     st.subheader("🚶 Pendlingskontroll")
 
@@ -191,7 +196,6 @@ if system_file and form_file:
                 )
 
                 if val == "Nej":
-
                     alternatives = list(set([
                         r["Skola"] for r in rows
                         if r["Region"]==region and r["Skola"]!=skola
@@ -305,3 +309,7 @@ if system_file and form_file:
             file_name=file,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+import pandas as pd
+import unicodedata
+
+from openpyxl import Workbook
