@@ -1,6 +1,5 @@
 
-import streamlit as st
-import pandas as pd
+import streamlit as stimport streamlit as as pd
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
@@ -49,22 +48,26 @@ if system_file and form_file:
         except:
             kap[r["Skolenhet"]] = 0
 
-    # ✅ robust excel-läsning
     students = pd.read_excel(form_file, engine="openpyxl")
     students.columns = students.columns.str.strip()
 
+
     # =========================
-    # ROBUST KOLUMNVAL ✅
+    # ✅ SMART KOLUMNVAL
     # =========================
     def find_or_choose(label, keywords):
 
-        matches = [c for c in students.columns
-                   if any(k in c.lower() for k in keywords)]
+        matches = [
+            c for c in students.columns
+            if any(k in c.lower() for k in keywords)
+        ]
 
-        if len(matches) == 1:
+        # ✅ hittad
+        if len(matches) >= 1:
             return matches[0]
 
-        st.warning(f"Välj kolumn för: {label}")
+        # ❗ annars fråga
+        st.warning(f"Kunde inte hitta kolumn för '{label}' – välj manuellt")
         return st.selectbox(label, students.columns, key=label)
 
 
@@ -74,15 +77,19 @@ if system_file and form_file:
     alt_col = find_or_choose("Alternativ ort", ["alternativ"])
     pref_col = find_or_choose("Val av ort", ["utgå","helst"])
 
+
     students["Namn"] = students[fn] + " " + students[ln]
+
 
     def choose_loc(row):
         if "alternativ" in str(row[pref_col]).lower() and pd.notna(row[alt_col]):
             return row[alt_col]
         return row[bost]
 
+
     students["ChosenOrt"] = students.apply(choose_loc, axis=1)
     students["Region"] = students["ChosenOrt"].apply(get_region)
+
 
     # =========================
     # PLATSER
@@ -96,6 +103,7 @@ if system_file and form_file:
                 "Region": r["Region"],
                 "År1": "", "År2": "", "År3": "", "År4": ""
             })
+
 
     # =========================
     # PLACERING
@@ -130,7 +138,7 @@ if system_file and form_file:
 
             place(student,"År1",A)
 
-            for sk in [B]+skolor_r:
+            for sk in [B] + skolor_r:
                 if usage[sk]["År2"] < kap[sk] and usage[sk]["År3"] < kap[sk]:
                     if place(student,"År2",sk):
                         place(student,"År3",sk)
@@ -143,8 +151,9 @@ if system_file and form_file:
                     if place(student,"År4",sk):
                         break
 
+
     # =========================
-    # PENDLING
+    # PENDLINGSKONTROLL
     # =========================
     st.subheader("🚶 Pendlingskontroll")
 
@@ -204,7 +213,7 @@ if system_file and form_file:
         "Oskarshamn": PatternFill("solid","DFF5DF"),
         "Karlskrona": PatternFill("solid","FFF4CC"),
         "Skola": PatternFill("solid","E7E7E7"),
-        "Header": PatternFill("solid","CCCCCC")
+        "Header": PatternFill("solid","CCCCCC"),
     }
 
     # HEADER
@@ -215,7 +224,7 @@ if system_file and form_file:
 
     for c in range(1,ws.max_column+1):
         cell = ws.cell(1,c)
-        cell.fill=fills["Header"]
+        cell.fill = fills["Header"]
         cell.font = Font(bold=True)
         cell.alignment = Alignment(horizontal="center")
 
@@ -224,24 +233,24 @@ if system_file and form_file:
 
         ws.append([])
         ws.append([region.upper()])
-        row=ws.max_row
+        row = ws.max_row
+
         ws.merge_cells(start_row=row,start_column=1,end_row=row,end_column=ws.max_column)
 
         for c in range(1,ws.max_column+1):
-            ws.cell(row,c).fill=fills[region]
+            ws.cell(row,c).fill = fills[region]
 
         ws.append([])
 
         for skola in skolor[skolor["Region"]==region]["Skolenhet"]:
 
             ws.append([skola])
-            row=ws.max_row
+            row = ws.max_row
 
             for c in range(1,ws.max_column+1):
-                ws.cell(row,c).fill=fills["Skola"]
-                ws.cell(row,c).font=Font(bold=True)
+                ws.cell(row,c).fill = fills["Skola"]
+                ws.cell(row,c).font = Font(bold=True)
 
-            # ✅ FIXAD RADSTRUKTUR
             school_rows = [r for r in rows if r["Skola"]==skola]
 
             for r in school_rows:
@@ -254,21 +263,20 @@ if system_file and form_file:
             ws.append([])
 
     # ===== BLAD 2 =====
-    ws2=wb.create_sheet("Studenter")
+    ws2 = wb.create_sheet("Studenter")
     ws2.append(["Student","Bostad","Alt"])
 
     for _,s in students.iterrows():
         ws2.append([s["Namn"],s[bost],s[alt_col]])
 
     # ===== BLAD 3 =====
-    ws3=wb.create_sheet("Kontroll")
-
+    ws3 = wb.create_sheet("Kontroll")
     ws3.append(["Student","Antal skolor","Status"])
 
     for _,s in students.iterrows():
 
-        skolset=set([r["Skola"] for r in rows if s["Namn"] in r.values()])
-        antal=len(skolset)
+        skolset = set([r["Skola"] for r in rows if s["Namn"] in r.values()])
+        antal = len(skolset)
 
         if antal==0:
             status="SAKNAR"; color="FFC7CE"
@@ -281,9 +289,9 @@ if system_file and form_file:
 
         ws3.append([s["Namn"],antal,status])
 
-        rN=ws3.max_row
+        rN = ws3.max_row
         for c in range(1,4):
-            ws3.cell(rN,c).fill=PatternFill("solid",color)
+            ws3.cell(rN,c).fill = PatternFill("solid",color)
 
     file="kull_resultat.xlsx"
     wb.save(file)
