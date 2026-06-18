@@ -1,71 +1,29 @@
 
 import streamlit as st
 import pandas as pd
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment
-
-
-st.title("VFU-placeringssystem")
-
-system_file = st.file_uploader("Översiktsfil", type=["xlsx"])
-form_file = st.file_uploader("Formulärsvar", type=["xlsx"])
-
-kull = st.number_input("Kull", value=26)
-program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
-
-
-def get_region(text):
-    t = str(text).lower()
-
-    if "oskarshamn" in t:
-        return "Oskarshamn"
-
-    if any(x in t for x in ["karlskrona","ronneby","rödeby"]):
-        return "Karlskrona"
-
-    if "kalmar" in t:
-        return "Kalmar"
-
-    return None
-
-
-if system_file and form_file:
-
-    # =========================
-    # DATA
-    # =========================
-    skolor = pd.read_excel(system_file)
-    skolor.columns = skolor.columns.str.strip()
-
-    skolor = skolor[
-        (skolor["Kull"] == kull) &
+olor["Kull"] == kull) &from openpyxl import Workbook
         (skolor["Inriktning"].str.upper() == program)
     ].copy()
 
     skolor["Region"] = skolor["Partnerområde"].apply(get_region)
 
-    # kapacitet
+    # ===== KAP =====
     kap = {}
     kap_osaker = {}
 
     for _, r in skolor.iterrows():
         try:
             val = r["Antal platser"]
-
             if str(val).strip() in ["", "?", "nan"]:
                 raise ValueError
-
             kap[r["Skolenhet"]] = int(float(val))
             kap_osaker[r["Skolenhet"]] = False
-
         except:
             kap[r["Skolenhet"]] = 2
             kap_osaker[r["Skolenhet"]] = True
 
 
-    # =========================
-    # STUDENTER
-    # =========================
+    # ===== STUDENTER =====
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
 
@@ -87,11 +45,10 @@ if system_file and form_file:
 
     students["ChosenOrt"] = students.apply(choose_loc, axis=1)
 
-    # region
+    # ===== REGION =====
     regions = []
 
     for _, row in students.iterrows():
-
         region = get_region(row["ChosenOrt"])
 
         if region is None:
@@ -106,9 +63,7 @@ if system_file and form_file:
     students["Region"] = regions
 
 
-    # =========================
-    # PLATSER
-    # =========================
+    # ===== SKAPA PLATSER =====
     rows = []
 
     for _, r in skolor.iterrows():
@@ -120,34 +75,34 @@ if system_file and form_file:
             })
 
 
-    # =========================
-    # PLACERING (alla får plats)
-    # =========================
+    # ===== BÄTTRE PLACERING =====
     for region in ["Kalmar","Oskarshamn","Karlskrona"]:
 
-        rows_r = [r for r in rows if r["Region"]==region]
-        stud_r = list(students[students["Region"]==region]["Namn"])
-        skolor_r = list(dict.fromkeys([r["Skola"] for r in rows_r]))
+        rows_r = [r for r in rows if r["Region"] == region]
+        stud_r = list(students[students["Region"] == region]["Namn"])
 
         for student in stud_r:
 
+            # välj minst fyllda plats
+            sorted_rows = sorted(
+                rows_r,
+                key=lambda x: (x["År1"] != "", x["Skola"])
+            )
+
             placed = False
 
-            for sk in skolor_r:
-                for r in rows_r:
-                    if r["Skola"] == sk and r["År1"] == "":
-                        r["År1"] = student
-                        placed = True
-                        break
-                if placed:
+            for r in sorted_rows:
+                if r["År1"] == "":
+                    r["År1"] = student
+                    placed = True
                     break
 
-            if not placed and len(rows_r) > 0:
+            if not placed:
                 rows_r[0]["År1"] = student
 
 
     # =========================
-    # 🚶 PENDLING (FIXAD)
+    # 🚶 PENDLING (TYDLIG)
     # =========================
     st.subheader("🚶 Pendlingskontroll")
 
@@ -158,7 +113,7 @@ if system_file and form_file:
         input_name = student_input.strip().lower()
 
         match = students[
-            students["Namn"].str.strip().str.lower() == input_name
+            students["Namn"].str.lower() == input_name
         ]
 
         if len(match) == 0:
@@ -172,25 +127,21 @@ if system_file and form_file:
             found = False
 
             for r in rows:
-                for year in ["År1","År2","År3","År4"]:
-                    if r[year] == sr["Namn"]:
-
-                        found = True
-
-                        st.write(f"{year}: {r['Skola']}")
-
-                        st.radio(
-                            f"Pendling OK för {year}?",
-                            ["Ja","Nej"],
-                            key=f"{input_name}_{year}"
-                        )
+                if r["År1"] == sr["Namn"]:
+                    found = True
+                    st.write(f"År1: {r['Skola']}")
+                    st.radio(
+                        "Pendling OK?",
+                        ["Ja","Nej"],
+                        key=f"{input_name}_År1"
+                    )
 
             if not found:
-                st.error("Studenten har ingen placering ännu")
+                st.error("Ingen placering hittad")
 
 
     # =========================
-    # EXCEL
+    # EXCEL (FIXAD STRUKTUR)
     # =========================
     wb = Workbook()
     ws = wb.active
@@ -201,30 +152,53 @@ if system_file and form_file:
     for skola in skolor["Skolenhet"]:
 
         label = f"{skola} (max {kap[skola]})"
-
         if kap_osaker[skola]:
             label += " ⚠ osäker"
 
         ws.append([label])
 
-        school_rows = [r for r in rows if r["Skola"]==skola]
+        school_rows = [r for r in rows if r["Skola"] == skola]
 
-        if len(school_rows) == 0:
+        if not school_rows:
             ws.append(["","","",""])
         else:
             for r in school_rows:
-                ws.append(["",r["År1"],r["År2"],r["År3"]])
+                ws.append(["", r["År1"], r["År2"], r["År3"]])
 
         ws.append([])
 
-
-    file="kull_resultat.xlsx"
+    file = "kull_resultat.xlsx"
     wb.save(file)
 
-    # ✅ EXPORTKNAPP (GARANTERAD)
     with open(file,"rb") as f:
-        st.download_button(
-            "⬇️ Ladda ner Excel",
-            f,
-            file_name=file
-        )
+        st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
+``
+from openpyxl.styles import Font, PatternFill, Alignment
+
+
+st.title("VFU-placeringssystem")
+
+system_file = st.file_uploader("Översiktsfil", type=["xlsx"])
+form_file = st.file_uploader("Formulärsvar", type=["xlsx"])
+
+kull = st.number_input("Kull", value=26)
+program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
+
+
+def get_region(text):
+    t = str(text).lower()
+    if "oskarshamn" in t:
+        return "Oskarshamn"
+    if any(x in t for x in ["karlskrona","ronneby","rödeby"]):
+        return "Karlskrona"
+    if "kalmar" in t:
+        return "Kalmar"
+    return None
+
+
+if system_file and form_file:
+
+    skolor = pd.read_excel(system_file)
+    skolor.columns = skolor.columns.str.strip()
+
+    skolor = skolor[
