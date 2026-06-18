@@ -1,5 +1,5 @@
-import streamlit as st
-import pandas as pd
+
+import streamlit as stimport streamlit pandas as pd
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
@@ -14,6 +14,9 @@ kull = st.number_input("Kull", value=26)
 program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
 
 
+# =========================
+# REGION
+# =========================
 def get_region(text):
     t = str(text).lower()
     if "oskarshamn" in t:
@@ -25,7 +28,9 @@ def get_region(text):
 
 if system_file and form_file:
 
-    # ===== LÄS DATA =====
+    # =========================
+    # DATA
+    # =========================
     skolor = pd.read_excel(system_file, engine="openpyxl")
     skolor.columns = skolor.columns.str.strip()
 
@@ -43,15 +48,30 @@ if system_file and form_file:
         except:
             kap[r["Skolenhet"]] = 0
 
-    # ✅ robust – tar första bladet
+    # ✅ robust excel-läsning
     students = pd.read_excel(form_file, engine="openpyxl")
     students.columns = students.columns.str.strip()
 
-    fn = [c for c in students.columns if "förnamn" in c.lower()][0]
-    ln = [c for c in students.columns if "efternamn" in c.lower()][0]
-    bost = [c for c in students.columns if "bostadsort" in c.lower()][0]
-    alt_col = [c for c in students.columns if "alternativ" in c.lower()][0]
-    pref_col = [c for c in students.columns if "helst utgå" in c.lower()][0]
+    # =========================
+    # ROBUST KOLUMNVAL ✅
+    # =========================
+    def find_or_choose(label, keywords):
+
+        matches = [c for c in students.columns
+                   if any(k in c.lower() for k in keywords)]
+
+        if len(matches) == 1:
+            return matches[0]
+
+        st.warning(f"Välj kolumn för: {label}")
+        return st.selectbox(label, students.columns, key=label)
+
+
+    fn = find_or_choose("Förnamn", ["förnamn","first"])
+    ln = find_or_choose("Efternamn", ["efternamn","last"])
+    bost = find_or_choose("Bostadsort", ["bostad","ort"])
+    alt_col = find_or_choose("Alternativ ort", ["alternativ"])
+    pref_col = find_or_choose("Val av ort", ["utgå","helst"])
 
     students["Namn"] = students[fn] + " " + students[ln]
 
@@ -63,8 +83,11 @@ if system_file and form_file:
     students["ChosenOrt"] = students.apply(choose_loc, axis=1)
     students["Region"] = students["ChosenOrt"].apply(get_region)
 
-    # ===== SKAPA PLATSER =====
+    # =========================
+    # PLATSER
+    # =========================
     rows = []
+
     for _, r in skolor.iterrows():
         for _ in range(kap[r["Skolenhet"]]):
             rows.append({
@@ -73,7 +96,9 @@ if system_file and form_file:
                 "År1": "", "År2": "", "År3": "", "År4": ""
             })
 
-    # ===== PLACERING =====
+    # =========================
+    # PLACERING
+    # =========================
     for region in ["Kalmar","Oskarshamn","Karlskrona"]:
 
         rows_r = [r for r in rows if r["Region"] == region]
@@ -117,8 +142,9 @@ if system_file and form_file:
                     if place(student,"År4",sk):
                         break
 
-
-    # ===== PENDLING =====
+    # =========================
+    # PENDLING
+    # =========================
     st.subheader("🚶 Pendlingskontroll")
 
     student_input = st.text_input("Ange student")
@@ -136,7 +162,6 @@ if system_file and form_file:
             st.write(f"Bostadsort: {bostad}")
 
             p1=p2=p3=""
-
             for r in rows:
                 if r["År1"] == sr["Namn"]: p1=r["Skola"]
                 if r["År2"] == sr["Namn"]: p2=r["Skola"]
@@ -154,6 +179,7 @@ if system_file and form_file:
                 )
 
                 if val == "Nej":
+
                     alternatives = list(set([
                         r["Skola"] for r in rows
                         if r["Region"]==region and r["Skola"]!=skola
@@ -165,7 +191,9 @@ if system_file and form_file:
                         st.error("Ingen plats")
 
 
-    # ===== EXCEL =====
+    # =========================
+    # EXCEL
+    # =========================
     wb = Workbook()
     ws = wb.active
     ws.title = "Placeringar"
@@ -178,16 +206,19 @@ if system_file and form_file:
         "Header": PatternFill("solid","CCCCCC")
     }
 
-    # Header
+    # HEADER
     if program=="LGFRI":
         ws.append(["Skola","År1","År2","År3"])
     else:
         ws.append(["Skola","År1","År2","År3","År4"])
 
     for c in range(1,ws.max_column+1):
-        ws.cell(1,c).fill=fills["Header"]
+        cell = ws.cell(1,c)
+        cell.fill=fills["Header"]
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal="center")
 
-    # Data
+    # DATA
     for region in ["Kalmar","Oskarshamn","Karlskrona"]:
 
         ws.append([])
@@ -209,7 +240,7 @@ if system_file and form_file:
                 ws.cell(row,c).fill=fills["Skola"]
                 ws.cell(row,c).font=Font(bold=True)
 
-            # ✅ FIX: korrekt rad per plats
+            # ✅ FIXAD RADSTRUKTUR
             school_rows = [r for r in rows if r["Skola"]==skola]
 
             for r in school_rows:
@@ -223,13 +254,14 @@ if system_file and form_file:
 
     # ===== BLAD 2 =====
     ws2=wb.create_sheet("Studenter")
-    ws2.append(["Student","Bostad","Alt","År1","År2","År4"])
+    ws2.append(["Student","Bostad","Alt"])
 
     for _,s in students.iterrows():
-        ws2.append([s["Namn"],s[bost],s[alt_col],"","",""])
+        ws2.append([s["Namn"],s[bost],s[alt_col]])
 
     # ===== BLAD 3 =====
     ws3=wb.create_sheet("Kontroll")
+
     ws3.append(["Student","Antal skolor","Status"])
 
     for _,s in students.iterrows():
