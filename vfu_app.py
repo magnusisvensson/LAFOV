@@ -1,6 +1,10 @@
 
 import streamlit as st
-        region = s["Region"]import pandas as pd
+import pandas as pd
+from collections import defaultdict
+from openpyxl import Workbook
+
+        region = s["Region"]
         skolor_r = skolor[skolor["Region"] == region]["Skolenhet"].tolist()
 
         # fallback om för få skolor
