@@ -1,4 +1,7 @@
 
+# =========================
+# IMPORT
+# =========================
 import streamlit as st
 import pandas as pd
 
@@ -15,18 +18,26 @@ kull = st.number_input("Kull", value=26)
 program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
 
 
+# =========================
+# REGION
+# =========================
 def get_region(text):
     t = str(text).lower()
+
     if "oskarshamn" in t:
         return "Oskarshamn"
+
     if "karlskrona" in t or "ronneby" in t:
         return "Karlskrona"
+
     return "Kalmar"
 
 
+# =========================
+# KÖR
+# =========================
 if system_file and form_file:
 
-    # ===== SKOLOR =====
     skolor = pd.read_excel(system_file, engine="openpyxl")
     skolor.columns = skolor.columns.str.strip()
 
@@ -37,6 +48,7 @@ if system_file and form_file:
 
     skolor["Region"] = skolor["Partnerområde"].apply(get_region)
 
+    # kapacitet
     kap = {}
     for _, r in skolor.iterrows():
         try:
@@ -44,7 +56,9 @@ if system_file and form_file:
         except:
             kap[r["Skolenhet"]] = 0
 
-    # ===== STUDENTER =====
+    # =========================
+    # STUDENTER
+    # =========================
     students = pd.read_excel(form_file, sheet_name="Data", engine="openpyxl")
     students.columns = students.columns.str.strip()
 
@@ -52,23 +66,25 @@ if system_file and form_file:
     ln = [c for c in students.columns if "efternamn" in c.lower()][0]
     bost = [c for c in students.columns if "bostadsort" in c.lower()][0]
 
-    alt_bost_col = [c for c in students.columns if "alternativ" in c.lower()][0]
+    alt_col = [c for c in students.columns if "alternativ" in c.lower()][0]
     pref_col = [c for c in students.columns if "helst utgå" in c.lower()][0]
 
     students["Namn"] = students[fn] + " " + students[ln]
 
-    # välj rätt ort
-    def choose_location(row):
-        val = str(row[pref_col]).lower()
-        if "alternativ" in val and pd.notna(row[alt_bost_col]):
-            return row[alt_bost_col]
+    def choose_loc(row):
+        if "alternativ" in str(row[pref_col]).lower():
+            if pd.notna(row[alt_col]):
+                return row[alt_col]
         return row[bost]
 
-    students["ChosenOrt"] = students.apply(choose_location, axis=1)
+    students["ChosenOrt"] = students.apply(choose_loc, axis=1)
     students["Region"] = students["ChosenOrt"].apply(get_region)
 
-    # ===== PLATSER =====
+    # =========================
+    # PLATSER
+    # =========================
     rows = []
+
     for _, r in skolor.iterrows():
         for _ in range(kap[r["Skolenhet"]]):
             rows.append({
@@ -77,7 +93,9 @@ if system_file and form_file:
                 "År1": "", "År2": "", "År3": "", "År4": ""
             })
 
-    # ===== PLACERING =====
+    # =========================
+    # PLACERING
+    # =========================
     for region in ["Kalmar","Oskarshamn","Karlskrona"]:
 
         rows_r = [r for r in rows if r["Region"] == region]
@@ -86,33 +104,33 @@ if system_file and form_file:
 
         usage = {sk: {"År1":0,"År2":0,"År3":0,"År4":0} for sk in skolor_r}
 
-        def place(student, year, skola):
+        def place(student, year, sk):
             for r in rows_r:
-                if r["Skola"] == skola and r[year] == "":
+                if r["Skola"] == sk and r[year] == "":
                     r[year] = student
-                    usage[skola][year] += 1
+                    usage[sk][year] += 1
                     return True
             return False
 
         for i, student in enumerate(stud_r):
 
             A = skolor_r[i % len(skolor_r)]
-            B = skolor_r[(i+1) % len(skolor_r)] if len(skolor_r) > 1 else A
-            C = skolor_r[(i+2) % len(skolor_r)] if len(skolor_r) > 2 else B
+            B = skolor_r[(i+1) % len(skolor_r)]
+            C = skolor_r[(i+2) % len(skolor_r)] if len(skolor_r)>2 else B
 
             if program == "LGFRI":
-                place(student, "År1", A)
-                place(student, "År2", B)
-                place(student, "År3", A)
-                place(student, "År4", B)
+                place(student,"År1",A)
+                place(student,"År2",B)
+                place(student,"År3",A)
+                place(student,"År4",B)
 
             else:
-                place(student, "År1", A)
+                place(student,"År1",A)
 
-                for sk in [B] + skolor_r:
-                    if usage[sk]["År2"] < kap[sk] and usage[sk]["År3"] < kap:
-                        if place(student, "År2", sk):
-                            place(student, "År3", sk)
+                for sk in [B]+skolor_r:
+                    if usage[sk]["År2"] < kap[sk] and usage[sk]["År3"] < kap[sk]:
+                        if place(student,"År2",sk):
+                            place(student,"År3",sk)
                             break
 
                 used = set()
@@ -120,96 +138,123 @@ if system_file and form_file:
                     if student in [r["År1"], r["År2"], r["År3"]]:
                         used.add(r["Skola"])
 
-                placed4 = False
+                placed = False
                 for sk in skolor_r:
                     if sk not in used and usage[sk]["År4"] < kap[sk]:
-                        if place(student, "År4", sk):
-                            placed4 = True
+                        if place(student,"År4",sk):
+                            placed = True
                             break
 
-                if not placed4:
+                if not placed:
                     for sk in skolor_r:
                         if usage[sk]["År4"] < kap[sk]:
-                            place(student, "År4", sk)
+                            place(student,"År4",sk)
                             break
 
-    # ===== EXCEL =====
+    # =========================
+    # EXCEL MED FORMATERING
+    # =========================
     wb = Workbook()
     ws = wb.active
-    ws.title = "Placeringar"
 
-    ws.append(["Skola","År1","År2","År3","År4"])
-    for r in rows:
-        ws.append([r["Skola"], r["År1"], r["År2"], r["År3"], r["År4"]])
+    bold = Font(bold=True)
+    header_font = Font(bold=True, size=14)
 
-    # ===== BLAD 2 =====
-    ws2 = wb.create_sheet("Översikt studenter")
-    ws2.append(["Student","Bostad","Alt","År1","År2/3","År4"])
-
-    # ===== BLAD 3 (FÄRGKODAT) =====
-    ws3 = wb.create_sheet("Kontroll")
-
-    ws3.append([
-        "Student","Region","Ort",
-        "År1","År2/3","År4",
-        "Antal skolor","Status"
-    ])
+    center = Alignment(horizontal="center")
+    left = Alignment(horizontal="left")
 
     fills = {
-        "OK": PatternFill("solid", "C6EFCE"),
-        "MEDIUM": PatternFill("solid", "FFEB9C"),
-        "WARNING": PatternFill("solid", "FFD966"),
-        "BAD": PatternFill("solid", "FFC7CE")
+        "Kalmar": PatternFill("solid", fgColor="D9EAF7"),
+        "Oskarshamn": PatternFill("solid", fgColor="DFF5DF"),
+        "Karlskrona": PatternFill("solid", fgColor="FFF4CC"),
+        "Skola": PatternFill("solid", fgColor="E7E7E7"),
+        "Header": PatternFill("solid", fgColor="CCCCCC"),
     }
+
+    ws.append(["Skola","År1","År2","År3","År4"])
+
+    for c in range(1,6):
+        ws.cell(1,c).fill = fills["Header"]
+        ws.cell(1,c).font = bold
+        ws.cell(1,c).alignment = center
+
+    row_idx = 2
+
+    for region in ["Kalmar","Oskarshamn","Karlskrona"]:
+
+        ws.append([])
+        row_idx += 1
+
+        ws.merge_cells(start_row=row_idx,start_column=1,end_row=row_idx,end_column=5)
+        cell = ws.cell(row_idx,1)
+        cell.value = region.upper()
+        cell.fill = fills[region]
+        cell.font = header_font
+        cell.alignment = center
+
+        row_idx += 2
+
+        for skola in skolor[skolor["Region"]==region]["Skolenhet"]:
+
+            ws.append([skola])
+
+            for c in range(1,6):
+                ws.cell(row_idx,c).fill = fills["Skola"]
+                ws.cell(row_idx,c).font = bold
+
+            row_idx += 1
+
+            for r in rows:
+                if r["Skola"] == skola:
+                    ws.append(["",r["År1"],r["År2"],r["År3"],r["År4"]])
+
+                    for c in range(2,6):
+                        ws.cell(row_idx,c).alignment = left
+
+                    row_idx += 1
+
+            ws.append([])
+            row_idx += 1
+
+    # =========================
+    # BLAD 2 (FIXAD)
+    # =========================
+    ws2 = wb.create_sheet("Översikt studenter")
+
+    ws2.append(["Student","Bostad","Alt","År1","År2/3","År4"])
 
     for _, s in students.iterrows():
 
         namn = s["Namn"]
-        region = s["Region"]
-        ort = s["ChosenOrt"]
 
         p1 = p2 = p3 = ""
-        skolor_set = set()
 
         for r in rows:
             if r["År1"] == namn:
                 p1 = r["Skola"]
-                skolor_set.add(r["Skola"])
             if r["År2"] == namn:
                 p2 = r["Skola"]
-                skolor_set.add(r["Skola"])
             if r["År4"] == namn:
                 p3 = r["Skola"]
-                skolor_set.add(r["Skola"])
 
-        antal = len(skolor_set)
+        ws2.append([
+            namn,
+            s[bost],
+            s[alt_col],
+            p1,
+            p2,
+            p3
+        ])
 
-        if p1 == "" or p2 == "" or p3 == "":
-            status = "SAKNAR PLACERING"
-            fill = fills["BAD"]
-
-        elif antal == 1:
-            status = "EN SKOLA ALLA ÅR"
-            fill = fills["WARNING"]
-
-        elif antal == 2:
-            status = "OK (2 skolor)"
-            fill = fills["MEDIUM"]
-
-        else:
-            status = "BRA ROTATION"
-            fill = fills["OK"]
-
-        ws3.append([namn, region, ort, p1, p2, p3, antal, status])
-
-        for c in range(1, 9):
-            ws3.cell(ws3.max_row, c).fill = fill
-
+    # =========================
+    # KLART
+    # =========================
     file = "kull_resultat.xlsx"
     wb.save(file)
 
-    with open(file, "rb") as f:
-        st.download_button("⬇️ Ladda ner Excel", f, file_name=file)
+    with open(file,"rb") as f:
+        st.download_button("⬇️ Ladda ner Excel", f)
 
 else:
     st.info("Ladda upp båda filer")
+
