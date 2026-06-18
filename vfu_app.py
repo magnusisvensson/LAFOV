@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 
@@ -23,10 +24,13 @@ def get_region(text):
     if "oskarshamn" in t:
         return "Oskarshamn"
 
-    if "karlskrona" in t or "ronneby" in t or "rödeby" in t:
+    if any(x in t for x in ["karlskrona","ronneby","rödeby"]):
         return "Karlskrona"
 
-    return "Kalmar"
+    if "kalmar" in t:
+        return "Kalmar"
+
+    return None  # ✅ viktig ändring
 
 
 if system_file and form_file:
@@ -41,17 +45,14 @@ if system_file and form_file:
 
     skolor["Region"] = skolor["Partnerområde"].apply(get_region)
 
-    # =========================
-    # ✅ NY: ROBUST KAPACITET
-    # =========================
+    # ✅ kapacitet
     kap = {}
     kap_osaker = {}
 
     for _, r in skolor.iterrows():
-
-        val = r["Antal platser"]
-
         try:
+            val = r["Antal platser"]
+
             if str(val).strip() in ["", "?", "nan"]:
                 raise ValueError
 
@@ -64,7 +65,7 @@ if system_file and form_file:
 
 
     # =========================
-    # LÄS STUDENTER
+    # STUDENTER
     # =========================
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
@@ -87,18 +88,16 @@ if system_file and form_file:
 
     students["ChosenOrt"] = students.apply(choose_loc, axis=1)
 
-    # =========================
-    # ✅ REGIONVAL VID OKLAR ORT
-    # =========================
+    # ✅ REGIONVAL (FIX)
     regions = []
 
     for _, row in students.iterrows():
 
         region = get_region(row["ChosenOrt"])
 
-        if region == "Kalmar" and any(x in str(row["ChosenOrt"]).lower() for x in ["rödeby","karlskrona"]):
+        if region is None:
             region = st.selectbox(
-                f"Välj region för {row['Namn']}",
+                f"Välj region för {row['Namn']} ({row['ChosenOrt']})",
                 ["Kalmar","Karlskrona","Oskarshamn"],
                 key=row["Namn"]
             )
@@ -145,17 +144,17 @@ if system_file and form_file:
 
             if program=="LGFRI":
                 for r in rows_r:
-                    if r["Skola"]==A and r["År2"]=="":
+                    if r["Skola"] == A and r["År2"]=="":
                         r["År2"]=student
                         break
                 for r in rows_r:
-                    if r["Skola"]==B and r["År3"]=="":
+                    if r["Skola"] == B and r["År3"]=="":
                         r["År3"]=student
                         break
 
             else:
                 for r in rows_r:
-                    if r["Skola"]==B and r["År2"]=="":
+                    if r["Skola"] == B and r["År2"]=="":
                         r["År2"]=student
                         r["År3"]=student
                         break
@@ -164,108 +163,68 @@ if system_file and form_file:
 
 
     # =========================
+    # ✅ PENDLINGSKONTROLL (TILLBAKA)
+    # =========================
+    st.subheader("🚶 Pendlingskontroll")
+
+    student_input = st.text_input("Ange student")
+
+    if student_input:
+
+        match = students[students["Namn"].str.lower() == student_input.lower()]
+
+        if len(match):
+
+            sr = match.iloc[0]
+            bostad = sr["ChosenOrt"]
+
+            for r in rows:
+                for year in ["År1","År2","År3","År4"]:
+                    if r[year] == sr["Namn"]:
+
+                        val = st.radio(
+                            f"{year}: {bostad} → {r['Skola']} OK?",
+                            ["Ja","Nej"],
+                            key=f"{student_input}_{year}"
+                        )
+
+
+    # =========================
     # EXCEL
     # =========================
     wb = Workbook()
     ws = wb.active
+    ws.append(["Skola","År1","År2","År3"])
 
-    header = ["Skola","År1","År2","År3"]
-    if program != "LGFRI":
-        header.append("År4")
+    for _, r in skolor.iterrows():
 
-    ws.append(header)
+        label = f"{r['Skolenhet']} (max {kap[r['Skolenhet']]})"
 
-    for c in range(1,len(header)+1):
-        cell = ws.cell(1,c)
-        cell.fill = PatternFill("solid","CCCCCC")
-        cell.font = Font(bold=True)
-        cell.alignment = Alignment(horizontal="center")
+        if kap_osaker[r["Skolenhet"]]:
+            label += " ⚠ osäker"
 
-    for region in ["Kalmar","Oskarshamn","Karlskrona"]:
+        ws.append([label])
 
-        ws.append([])
-        ws.append([region.upper()])
-        ws.merge_cells(start_row=ws.max_row,start_column=1,
-                       end_row=ws.max_row,end_column=len(header))
-
-        for skola in skolor[skolor["Region"]==region]["Skolenhet"]:
-
-            # ✅ VISA OSÄKER
-            label = f"{skola} (max {kap[skola]})"
-
-            if kap_osaker[skola]:
-                label += " ⚠ osäker"
-
-            ws.append([label])
-
-            for r in rows:
-                if r["Skola"] == skola:
-
-                    row = ["",r["År1"],r["År2"],r["År3"]]
-                    if program!="LGFRI":
-                        row.append(r["År4"])
-
-                    ws.append(row)
-
-            ws.append([])
-
-    # ✅ AUTO WIDTH
-    for col in ws.columns:
-        max_len = max(len(str(cell.value)) if cell.value else 0 for cell in col)
-        ws.column_dimensions[col[0].column_letter].width = max_len + 2
-
+        for row in rows:
+            if row["Skola"] == r["Skolenhet"]:
+                ws.append(["",row["År1"],row["År2"],row["År3"]])
 
     # =========================
-    # BLAD 2
-    # =========================
-    ws2 = wb.create_sheet("Studenter")
-
-    ws2.append(["Student","Ort","År1","År2/3","År4"])
-
-    for _, s in students.iterrows():
-
-        p1=p2=p3=""
-
-        for r in rows:
-            if r["År1"]==s["Namn"]: p1=r["Skola"]
-            if r["År2"]==s["Namn"]: p2=r["Skola"]
-            if r["År4"]==s["Namn"]: p3=r["Skola"]
-
-        ws2.append([s["Namn"],s["ChosenOrt"],p1,p2,p3])
-
-
-    # =========================
-    # BLAD 3 (TYDLIG)
+    # KONTROLL (FIXAD)
     # =========================
     ws3 = wb.create_sheet("Kontroll")
 
-    ws3.append(["Student","Region","Ort","År1","År2","År4","Antal skolor","Status"])
+    ws3.append(["Student","Antal skolor"])
 
     for _, s in students.iterrows():
 
-        skol=set()
-        p1=p2=p3=""
+        skolset = set()
 
         for r in rows:
-            if r["År1"]==s["Namn"]: p1=r["Skola"]; skol.add(r["Skola"])
-            if r["År2"]==s["Namn"]: p2=r["Skola"]; skol.add(r["Skola"])
-            if r["År4"]==s["Namn"]: p3=r["Skola"]; skol.add(r["Skola"])
+            if s["Namn"] in [r["År1"],r["År2"],r["År3"],r["År4"]]:
+                skolset.add(r["Skola"])
 
-        antal=len(skol)
-
-        if antal==0:
-            status="SAKNAR"; color="FFCCCC"
-        elif antal==1:
-            status="EN"; color="FFD9B3"
-        elif antal==2:
-            status="OK"; color="FFF2CC"
-        else:
-            status="BRA"; color="CCFFCC"
-
-        ws3.append([s["Namn"],s["Region"],s["ChosenOrt"],p1,p2,p3,antal,status])
-
-        for c in range(1,9):
-            ws3.cell(ws3.max_row,c).fill=PatternFill("solid",color)
+        ws3.append([s["Namn"],len(skolset)])
 
 
     file="kull_resultat.xlsx"
