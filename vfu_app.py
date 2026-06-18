@@ -32,7 +32,7 @@ if system_file and form_file:
     # =========================
     # DATA
     # =========================
-    students = pd.read_excel(form_file, sheet_name="Data", engine="openpyxl")
+    skolor = pd.read_excel(system_file, engine="openpyxl")
     skolor.columns = skolor.columns.str.strip()
 
     skolor = skolor[
@@ -49,12 +49,12 @@ if system_file and form_file:
         except:
             kap[r["Skolenhet"]] = 0
 
-    students = pd.read_excel(form_file, engine="openpyxl")
+    # ✅ KRITISK FIX: läs rätt blad
+    students = pd.read_excel(form_file, sheet_name="Data", engine="openpyxl")
     students.columns = students.columns.str.strip()
 
-
     # =========================
-    # ✅ ENKEL KOLUMNMATCHNING
+    # ✅ ENKEL KOLUMNMATCHNING (som fungerade tidigare)
     # =========================
     def find_col(label, keyword):
 
@@ -149,7 +149,7 @@ if system_file and form_file:
 
 
     # =========================
-    # PENDLINGSKONTROLL
+    # PENDLING
     # =========================
     st.subheader("🚶 Pendlingskontroll")
 
@@ -185,7 +185,6 @@ if system_file and form_file:
                 )
 
                 if val == "Nej":
-
                     alternatives = list(set([
                         r["Skola"] for r in rows
                         if r["Region"]==region and r["Skola"]!=skola
@@ -274,20 +273,9 @@ if system_file and form_file:
         skolset = set([r["Skola"] for r in rows if s["Namn"] in r.values()])
         antal = len(skolset)
 
-        if antal == 0:
-            status="SAKNAR"; color="FFC7CE"
-        elif antal == 1:
-            status="EN"; color="FFD966"
-        elif antal == 2:
-            status="OK"; color="FFEB9C"
-        else:
-            status="BRA"; color="C6EFCE"
+        status = "OK" if antal == 2 else "EN" if antal == 1 else "SAKNAR"
 
         ws3.append([s["Namn"],antal,status])
-
-        rN = ws3.max_row
-        for c in range(1,4):
-            ws3.cell(rN,c).fill = PatternFill("solid",color)
 
     file = "kull_resultat.xlsx"
     wb.save(file)
@@ -299,7 +287,3 @@ if system_file and form_file:
             file_name=file,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
-import pandas as pd
-
-from openpyxl import Workbook
