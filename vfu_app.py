@@ -32,7 +32,7 @@ if system_file and form_file:
     # =========================
     # DATA
     # =========================
-    skolor = pd.read_excel(system_file, engine="openpyxl")
+    students = pd.read_excel(form_file, sheet_name="Data", engine="openpyxl")
     skolor.columns = skolor.columns.str.strip()
 
     skolor = skolor[
