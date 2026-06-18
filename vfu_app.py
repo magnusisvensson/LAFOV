@@ -1,9 +1,7 @@
 
 import streamlit as st
 import pandas as pd
-
 import Font, PatternFill, Alignment
-
 
 st.title("VFU-placeringssystem")
 
