@@ -132,7 +132,7 @@ if system_file and form_file:
     # =========================
     # PENDLING
     # =========================
-    st.subheader("🚶 Pendling")
+    st.subheader("Pendlingskontroll")
 
     student_input = st.text_input("Ange student")
 
