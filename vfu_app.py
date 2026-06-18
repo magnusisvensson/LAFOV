@@ -4,7 +4,9 @@ import pandas as pd
 from collections import defaultdict
 from openpyxl import Workbook
 
-        region = s["Region"]
+for _, s in students.iterrows():
+    region = s["Region"]
+
         skolor_r = skolor[skolor["Region"] == region]["Skolenhet"].tolist()
 
         # fallback om för få skolor
