@@ -30,7 +30,7 @@ def get_region(text):
     if "kalmar" in t:
         return "Kalmar"
 
-    return None  # ✅ viktig ändring
+    return None
 
 
 if system_file and form_file:
@@ -45,7 +45,7 @@ if system_file and form_file:
 
     skolor["Region"] = skolor["Partnerområde"].apply(get_region)
 
-    # ✅ kapacitet
+    # ===== kapacitet =====
     kap = {}
     kap_osaker = {}
 
@@ -63,10 +63,7 @@ if system_file and form_file:
             kap[r["Skolenhet"]] = 2
             kap_osaker[r["Skolenhet"]] = True
 
-
-    # =========================
-    # STUDENTER
-    # =========================
+    # ===== studenter =====
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
 
@@ -88,7 +85,7 @@ if system_file and form_file:
 
     students["ChosenOrt"] = students.apply(choose_loc, axis=1)
 
-    # ✅ REGIONVAL (FIX)
+    # ===== regionval =====
     regions = []
 
     for _, row in students.iterrows():
@@ -106,10 +103,7 @@ if system_file and form_file:
 
     students["Region"] = regions
 
-
-    # =========================
-    # PLATSER
-    # =========================
+    # ===== platser =====
     rows = []
 
     for _, r in skolor.iterrows():
@@ -120,10 +114,7 @@ if system_file and form_file:
                 "År1":"","År2":"","År3":"","År4":""
             })
 
-
-    # =========================
-    # PLACERING
-    # =========================
+    # ===== placering =====
     for region in ["Kalmar","Oskarshamn","Karlskrona"]:
 
         rows_r = [r for r in rows if r["Region"]==region]
@@ -144,74 +135,101 @@ if system_file and form_file:
 
             if program=="LGFRI":
                 for r in rows_r:
-                    if r["Skola"] == A and r["År2"]=="":
+                    if r["Skola"]==A and r["År2"]=="":
                         r["År2"]=student
                         break
                 for r in rows_r:
-                    if r["Skola"] == B and r["År3"]=="":
+                    if r["Skola"]==B and r["År3"]=="":
                         r["År3"]=student
                         break
-
             else:
                 for r in rows_r:
-                    if r["Skola"] == B and r["År2"]=="":
+                    if r["Skola"]==B and r["År2"]=="":
                         r["År2"]=student
                         r["År3"]=student
                         break
 
             i += 1
 
-
     # =========================
-    # ✅ PENDLINGSKONTROLL (TILLBAKA)
+    # ✅ PENDLING (FIXAD)
     # =========================
     st.subheader("🚶 Pendlingskontroll")
 
-    student_input = st.text_input("Ange student")
+    student_input = st.text_input("Ange studentens namn")
 
     if student_input:
 
         match = students[students["Namn"].str.lower() == student_input.lower()]
 
-        if len(match):
+        if len(match)==0:
+            st.warning("Student hittades inte")
 
+        else:
             sr = match.iloc[0]
+
             bostad = sr["ChosenOrt"]
+            st.write(f"Bostadsort: {bostad}")
 
             for r in rows:
                 for year in ["År1","År2","År3","År4"]:
                     if r[year] == sr["Namn"]:
 
-                        val = st.radio(
-                            f"{year}: {bostad} → {r['Skola']} OK?",
+                        st.write(f"{year}: {r['Skola']}")
+
+                        st.radio(
+                            f"OK pendling?",
                             ["Ja","Nej"],
                             key=f"{student_input}_{year}"
                         )
 
-
     # =========================
-    # EXCEL
+    # EXCEL (3 FLIKAR)
     # =========================
     wb = Workbook()
     ws = wb.active
+    ws.title = "Placeringar"
+
     ws.append(["Skola","År1","År2","År3"])
 
-    for _, r in skolor.iterrows():
+    for region in ["Kalmar","Oskarshamn","Karlskrona"]:
 
-        label = f"{r['Skolenhet']} (max {kap[r['Skolenhet']]})"
+        ws.append([])
+        ws.append([region.upper()])
 
-        if kap_osaker[r["Skolenhet"]]:
-            label += " ⚠ osäker"
+        for skola in skolor[skolor["Region"]==region]["Skolenhet"]:
 
-        ws.append([label])
+            label = f"{skola} (max {kap[skola]})"
 
-        for row in rows:
-            if row["Skola"] == r["Skolenhet"]:
-                ws.append(["",row["År1"],row["År2"],row["År3"]])
+            if kap_osaker[skola]:
+                label += " ⚠ osäker"
 
-    # =========================
-    # KONTROLL (FIXAD)
-    # =========================
+            ws.append([label])
+
+            school_rows = [r for r in rows if r["Skola"]==skola]
+
+            for r in school_rows:
+                ws.append(["",r["År1"],r["År2"],r["År3"]])
+
+            ws.append([])
+
+    # ===== BLAD 2 =====
+    ws2 = wb.create_sheet("Studenter")
+
+    ws2.append(["Student","Ort","År1","År2/3","År4"])
+
+    for _, s in students.iterrows():
+
+        p1=p2=p3=""
+
+        for r in rows:
+            if r["År1"]==s["Namn"]: p1=r["Skola"]
+            if r["År2"]==s["Namn"]: p2=r["Skola"]
+            if r["År4"]==s["Namn"]: p3=r["Skola"]
+
+        ws2.append([s["Namn"],s["ChosenOrt"],p1,p2,p3])
+
+    # ===== BLAD 3 =====
     ws3 = wb.create_sheet("Kontroll")
 
     ws3.append(["Student","Antal skolor"])
@@ -225,7 +243,6 @@ if system_file and form_file:
                 skolset.add(r["Skola"])
 
         ws3.append([s["Namn"],len(skolset)])
-
 
     file="kull_resultat.xlsx"
     wb.save(file)
