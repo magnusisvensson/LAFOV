@@ -6,7 +6,7 @@ from openpyxl.styles import Font
 from io import BytesIO
 
 st.set_page_config(layout="wide")
-st.title("VFU-placering (komplett)")
+st.title("VFU-placering")
 
 # ==============================
 # Ladda upp filer
@@ -39,8 +39,6 @@ if file1 and file2:
     # Hitta rätt blad
     # ==============================
     def hitta_blad(excel, typ):
-
-        # prioritera "Data"
         for s in excel.sheet_names:
             if s.lower() == "data":
                 return s
@@ -62,9 +60,6 @@ if file1 and file2:
     if not stud_sheet or not skol_sheet:
         st.error("❌ Kunde inte identifiera rätt blad")
         st.stop()
-
-    st.success(f"Studentblad: {stud_sheet}")
-    st.success(f"Skolblad: {skol_sheet}")
 
     stud_df = pd.read_excel(excel_stud, sheet_name=stud_sheet)
     skol_df = pd.read_excel(excel_skol, sheet_name=skol_sheet)
@@ -89,26 +84,36 @@ if file1 and file2:
 
     def välj_ort(row):
         if "alternativ" in str(row["Val"]).lower():
-            return row["AltOrt"]
-        return row["Ort"]
+            return row.get("AltOrt", "")
+        return row.get("Ort", "")
 
     stud_df["AktivOrt"] = stud_df.apply(välj_ort, axis=1)
 
     # ==============================
-    # Val
+    # VAL (FIXAD KULL)
     # ==============================
-    vald_inriktning = st.selectbox("Inriktning", sorted(skol_df["Inriktning"].dropna().unique()))
-    vald_kull = st.selectbox("Kull", sorted(skol_df["Kull"].dropna().unique()))
+    valda_inriktningar = sorted(skol_df["Inriktning"].dropna().astype(str).unique())
+    vald_inriktning = st.selectbox("Inriktning", valda_inriktningar)
+
+    kullar = sorted(skol_df["Kull"].dropna().astype(str).unique())
+    vald_kull = st.selectbox("Kull", kullar)
 
     region_typ = st.selectbox(
         "Region (LAFOV/LAGRV)",
         ["Kalmar (ABBC)", "Karlskrona/Oskarshamn (ABAB)"]
     )
 
+    # ==============================
+    # FILTRERA SKOLOR (FIXAD)
+    # ==============================
     skolor_df = skol_df[
-        (skol_df["Inriktning"] == vald_inriktning) &
-        (skol_df["Kull"] == vald_kull)
+        (skol_df["Inriktning"].astype(str) == vald_inriktning) &
+        (skol_df["Kull"].astype(str) == vald_kull)
     ]
+
+    if skolor_df.empty:
+        st.warning("⚠️ Inga skolor matchar val")
+        st.stop()
 
     kapacitet = {
         row["Skolenhet"]: int(row["Antal platser"])
@@ -120,17 +125,21 @@ if file1 and file2:
     studenter = stud_df["Student"].tolist()
 
     # ==============================
-    # Tilldelning
+    # Tilldelning (stabil version)
     # ==============================
     def tilldela(studenter, skolor, kap, antal):
+
         resultat = {}
-        idx = 0
         kvar = kap.copy()
+        idx = 0
 
         for student in studenter:
             val = []
 
-            while len(val) < antal:
+            # säkerhet så vi inte fastnar
+            loop_guard = 0
+
+            while len(val) < antal and loop_guard < 10000:
                 s = skolor[idx % len(skolor)]
 
                 if kvar[s] > 0:
@@ -138,6 +147,7 @@ if file1 and file2:
                     kvar[s] -= 1
 
                 idx += 1
+                loop_guard += 1
 
             resultat[student] = val
 
@@ -150,17 +160,33 @@ if file1 and file2:
 
         data = tilldela(studenter, skolor, kapacitet, 2)
 
-        schema = [[s, A, A, B] for s, (A, B) in data.items()]
+        schema = [
+            [s] + d + [""]*(2-len(d)) + [""] if len(d) < 2 else [s, d[0], d[0], d[1]]
+            for s, d in data.items()
+        ]
+
         cols = ["Student", "År1", "År2", "År3"]
 
     else:
 
         if "Kalmar" in region_typ:
             data = tilldela(studenter, skolor, kapacitet, 3)
-            schema = [[s, A, B, B, C] for s, (A, B, C) in data.items()]
+            schema = [
+                [s] + d + [""]*(3-len(d))
+                for s, d in data.items()
+            ]
+            schema = [
+                [r[0], r[1], r[2], r[2], r[3]] for r in schema
+            ]
         else:
             data = tilldela(studenter, skolor, kapacitet, 2)
-            schema = [[s, A, B, A, B] for s, (A, B) in data.items()]
+            schema = [
+                [s] + d + [""]*(2-len(d))
+                for s, d in data.items()
+            ]
+            schema = [
+                [r[0], r[1], r[2], r[1], r[2]] for r in schema
+            ]
 
         cols = ["Student", "År1", "År2", "År3", "År4"]
 
@@ -170,14 +196,15 @@ if file1 and file2:
     st.dataframe(schema_df)
 
     # ==============================
-    # Pendlingskontroll
+    # PENDLING
     # ==============================
     st.subheader("Pendlingskontroll")
 
-    ort_val, ok_status = {}, {}
+    ort_val = {}
+    ok_status = {}
 
     for i, row in stud_df.iterrows():
-        c1, c2, c3 = st.columns([3,3,1])
+        c1, c2, c3 = st.columns([3, 3, 1])
 
         s = row["Student"]
 
@@ -197,21 +224,21 @@ if file1 and file2:
 
         wb = Workbook()
 
+        # Placeringar
         ws1 = wb.active
         ws1.title = "Placeringar"
         ws1.append(cols)
 
-        # 🔧 FIXAT HÄR
         for cell in ws1[1]:
             cell.font = Font(bold=True)
 
         for _, r in schema_df.iterrows():
             ws1.append(list(r))
 
+        # Rapport
         ws2 = wb.create_sheet("Rapport")
         ws2.append(["Student", "AktivOrt", "Vald ort", "OK"])
 
-        # 🔧 FIXAT
         for cell in ws2[1]:
             cell.font = Font(bold=True)
 
@@ -225,20 +252,23 @@ if file1 and file2:
                 "OK" if ok_status.get(s) else ""
             ])
 
+        # Kontroll
         ws3 = wb.create_sheet("Kontroll")
         ws3.append(["Student", "Status"])
 
-        # 🔧 FIXAT
         for cell in ws3[1]:
             cell.font = Font(bold=True)
 
         for s in studenter:
-            ws3.append([s, "Klar" if ok_status.get(s) else "Ej klar"])
+            ws3.append([
+                s,
+                "Klar" if ok_status.get(s) else "Ej klar"
+            ])
 
-        out = BytesIO()
-        wb.save(out)
-        out.seek(0)
-        return out
+        buffer = BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+        return buffer
 
     st.download_button(
         "Ladda ner Excel",
