@@ -4,6 +4,7 @@ import pandas as pd
 from collections import defaultdict
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill
+import random
 
 st.set_page_config(layout="wide")
 
@@ -17,7 +18,7 @@ program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
 
 
 # =========================
-# SESSION STATE
+# SESSION
 # =========================
 if "step" not in st.session_state:
     st.session_state.step = 1
@@ -33,11 +34,15 @@ if "rejected" not in st.session_state:
 # REGION
 # =========================
 def get_region(text):
-    t=str(text).lower()
-    if "oskarshamn" in t: return "Oskarshamn"
-    if any(x in t for x in ["karlskrona","ronneby","rödeby"]): return "Karlskrona"
-    if "kalmar" in t: return "Kalmar"
-    return None
+    t = str(text).lower()
+
+    if "oskarshamn" in t:
+        return "Oskarshamn"
+
+    if any(x in t for x in ["karlskrona","ronneby","rödeby"]):
+        return "Karlskrona"
+
+    return "Kalmar"
 
 
 if system_file and form_file:
@@ -48,25 +53,20 @@ if system_file and form_file:
     skolor = pd.read_excel(system_file)
     skolor.columns = skolor.columns.str.strip()
 
-    # ✅ RENGÖR SKOLNAMN (fix för KeyError)
     skolor["Skolenhet"] = skolor["Skolenhet"].astype(str).str.strip()
 
     skolor = skolor[
         (
-            (skolor["Kull"]==kull) |
-            (skolor["Kull"].astype(str).str.upper()=="VAKANT")
+            (skolor["Kull"] == kull) |
+            (skolor["Kull"].astype(str).str.upper() == "VAKANT")
         ) &
-        (skolor["Inriktning"].str.upper()==program)
+        (skolor["Inriktning"].str.upper() == program)
     ].copy()
 
     skolor["Region"] = skolor["Partnerområde"].apply(get_region)
 
-    # ✅ ta bort trasiga regioner
-    skolor = skolor[skolor["Region"].notna()]
-
-    # ✅ kap
     kap = {}
-    for _,r in skolor.iterrows():
+    for _, r in skolor.iterrows():
         try:
             kap[r["Skolenhet"]] = int(float(r["Antal platser"]))
         except:
@@ -88,38 +88,37 @@ if system_file and form_file:
 
 
     # =========================
-    # 🔵 STEG 1 – REGIONVAL
+    # STEG 1 REGION
     # =========================
     if st.session_state.step == 1:
 
         st.header("1. Välj region")
 
-        temp_regions = {}
+        temp = {}
 
-        for _,row in students.iterrows():
+        for _, row in students.iterrows():
 
             name = row["Student"]
-
             default = get_region(row["Ort"])
             saved = st.session_state.student_regions.get(name, default)
 
             region = st.selectbox(
                 f"{name} ({row['Ort']})",
                 ["Kalmar","Karlskrona","Oskarshamn"],
-                index=["Kalmar","Karlskrona","Oskarshamn"].index(saved) if saved else 0,
-                key=f"region_{name}"
+                index=["Kalmar","Karlskrona","Oskarshamn"].index(saved),
+                key=f"reg_{name}"
             )
 
-            temp_regions[name] = region
+            temp[name] = region
 
         if st.button("✅ Bekräfta regionval"):
-            st.session_state.student_regions = temp_regions
+            st.session_state.student_regions = temp
             st.session_state.step = 2
             st.rerun()
 
 
     # =========================
-    # 🟢 STEG 2 – PLACERING
+    # STEG 2 PLACERING
     # =========================
     if st.session_state.step == 2:
 
@@ -131,94 +130,74 @@ if system_file and form_file:
 
         results=[]
 
-        # ✅ ROBUST VERSION (fix)
         def best_school(years, candidates):
 
-            # filtrera bort trasig data
-            candidates = [
-                sk for sk in candidates
-                if isinstance(sk,str)
-                and sk.strip() != ""
-                and sk in kap
-            ]
+            candidates = [sk for sk in candidates if sk in kap]
 
             if not candidates:
                 return None
 
+            # ✅ liten slump för att bryta dominans
+            random.shuffle(candidates)
+
             return min(
                 candidates,
-                key=lambda sk: max(usage[sk].get(y,0)/kap.get(sk,1) for y in years)
+                key=lambda sk: max(usage[sk][y]/kap[sk] for y in years)
             )
 
-        # =========================
-        # PLACERING
-        # =========================
-        for i,s in students.iterrows():
+
+        for i, s in students.iterrows():
 
             student = s["Student"]
             region = st.session_state.student_regions.get(student)
 
             skolor_r = skolor[skolor["Region"]==region]["Skolenhet"].tolist()
 
-            # ✅ säkerställ lista
-            skolor_r = [sk for sk in skolor_r if isinstance(sk,str) and sk.strip()!=""]
-
-            # ✅ ROTATION (så alla skolor används)
+            # ✅ rotation
             if skolor_r:
                 shift = i % len(skolor_r)
                 skolor_r = skolor_r[shift:] + skolor_r[:shift]
 
-            # ✅ reject
+            # reject
             reject = st.session_state.rejected.get(student,[])
             skolor_r = [sk for sk in skolor_r if sk not in reject]
 
             if len(skolor_r) < 2:
-                skolor_r = skolor[skolor["Region"]==region]["Skolenhet"].tolist()
+                continue
 
-            # =========================
-            # LGFRI
-            # =========================
+            # ---------- LOGIK ----------
             if program == "LGFRI":
 
                 A = best_school(["År1","År2"], skolor_r)
-
-                rest=[sk for sk in skolor_r if sk!=A]
-                B = best_school(["År3"], rest if rest else skolor_r)
+                B = best_school(["År3"], [sk for sk in skolor_r if sk != A])
 
                 y1,y2,y3,y4 = A,A,B,""
 
-            # =========================
-            # LAFOV/LAGRV
-            # =========================
             else:
 
                 if region == "Kalmar":
 
                     A = best_school(["År1"], skolor_r)
 
-                    rest1=[sk for sk in skolor_r if sk!=A]
-                    B = best_school(["År2","År3"], rest1 if rest1 else skolor_r)
+                    rest1=[sk for sk in skolor_r if sk != A]
+                    B = best_school(["År2","År3"], rest1)
 
-                    rest2=[sk for sk in rest1 if sk!=B]
-                    C = best_school(["År4"], rest2 if rest2 else skolor_r)
+                    rest2=[sk for sk in rest1 if sk != B]
+                    C = best_school(["År4"], rest2)
 
                     y1,y2,y3,y4 = A,B,B,C
 
                 else:
 
                     A = best_school(["År1","År3"], skolor_r)
-
-                    rest=[sk for sk in skolor_r if sk!=A]
-                    B = best_school(["År2","År4"], rest if rest else skolor_r)
+                    B = best_school(["År2","År4"], [sk for sk in skolor_r if sk != A])
 
                     y1,y2,y3,y4 = A,B,A,B
 
-            # =========================
-            # UPDATE usage
-            # =========================
-            if y1: usage[y1]["År1"]+=1
-            if y2: usage[y2]["År2"]+=1
-            if y3: usage[y3]["År3"]+=1
+            # update
+            usage[y1]["År1"]+=1
+            usage[y2]["År2"]+=1
+            usage[y3]["År3"]+=1
             if y4: usage[y4]["År4"]+=1
 
             results.append({
@@ -228,11 +207,11 @@ if system_file and form_file:
                 "År1":y1,"År2":y2,"År3":y3,"År4":y4
             })
 
-        df=pd.DataFrame(results)
+        df = pd.DataFrame(results)
 
 
         # =========================
-        # 🚶 PENDLING
+        # PENDLING
         # =========================
         st.subheader("🚶 Pendlingskontroll")
 
@@ -264,12 +243,11 @@ if system_file and form_file:
 
 
         # =========================
-        # 📊 EXCEL
+        # EXCEL (REN)
         # =========================
-        wb=Workbook()
-
-        ws=wb.active
-        ws.title="Placeringar"
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Placeringar"
 
         ws.append(["Skola","År1","År2","År3","År4"])
 
@@ -277,7 +255,6 @@ if system_file and form_file:
 
         for region in ["Kalmar","Oskarshamn","Karlskrona"]:
 
-            ws.append([])
             ws.append([region])
             row = ws.max_row
             ws.merge_cells(start_row=row,start_column=1,end_row=row,end_column=5)
@@ -291,14 +268,14 @@ if system_file and form_file:
 
                 ws.append([f"{skola} (max {kap[skola]})"])
 
-                subset=df[
+                subset = df[
                     (df["År1"]==skola)|
                     (df["År2"]==skola)|
                     (df["År3"]==skola)|
                     (df["År4"]==skola)
                 ].drop_duplicates("Student")
 
-                for _,s in subset.iterrows():
+                for _, s in subset.iterrows():
                     ws.append([
                         "",
                         s["Student"] if s["År1"]==skola else "",
@@ -307,27 +284,8 @@ if system_file and form_file:
                         s["Student"] if s["År4"]==skola else "",
                     ])
 
-                ws.append([])
-
-        # ---- Studenter ----
-        ws2=wb.create_sheet("Studenter")
-        ws2.append(["Student","Ort","Region","År1","År2","År3","År4"])
-
-        for _,r in df.iterrows():
-            ws2.append([r["Student"],r["Ort"],r["Region"],r["År1"],r["År2"],r["År3"],r["År4"]])
-
-        # ---- Kontroll ----
-        ws3=wb.create_sheet("Kontroll")
-        ws3.append(["Student","Antal skolor"])
-
-        for _,r in df.iterrows():
-            skolset={r["År1"],r["År2"],r["År3"],r["År4"]}
-            skolset.discard("")
-            ws3.append([r["Student"],len(skolset)])
-
         file="kull_resultat.xlsx"
         wb.save(file)
 
         with open(file,"rb") as f:
             st.download_button("⬇️ Ladda ner Excel",f,file_name=file)
-
