@@ -88,7 +88,7 @@ if system_file and form_file:
 
 
     # =========================
-    # STEG 1 – REGION
+    # STEG 1
     # =========================
     if st.session_state.step == 1:
 
@@ -123,30 +123,42 @@ if system_file and form_file:
 
 
     # =========================
-    # STEG 2 – PLACERING
+    # STEG 2
     # =========================
     if st.session_state.step == 2:
 
-        results=[]
+        usage = defaultdict(lambda:{
+            "År1":0,"År2":0,"År3":0,"År4":0
+        })
 
-        region_queues={
-            r:deque(skolor[skolor["Region"]==r]["Skolenhet"].tolist())
-            for r in ["Kalmar","Karlskrona","Oskarshamn"]
-        }
+        # ✅ KAPACITETSSTYRD FUNKTION
+        def best_school(skolor_list, year):
+
+            def load(sk):
+                return usage[sk][year] / kap.get(sk,1)
+
+            return min(skolor_list, key=load)
+
+        results=[]
 
         for _,s in students.iterrows():
 
             student=s["Student"]
             region=st.session_state.student_regions.get(student)
 
-            queue=region_queues[region]
-            queue.rotate(-1)
+            skolor_r = skolor[skolor["Region"]==region]["Skolenhet"].tolist()
 
-            skolor_r=list(queue)
+            if not skolor_r:
+                continue
 
-            A=skolor_r[0]
-            B=skolor_r[1] if len(skolor_r)>1 else A
-            C=skolor_r[2] if len(skolor_r)>2 else B
+            # ✅ KAPACITETSVAL
+            A = best_school(skolor_r, "År1")
+
+            rest1 = [sk for sk in skolor_r if sk != A]
+            B = best_school(rest1, "År2") if rest1 else A
+
+            rest2 = [sk for sk in rest1 if sk != B]
+            C = best_school(rest2, "År4") if rest2 else B
 
             if program=="LGFRI":
                 y1,y2,y3,y4=A,A,B,""
@@ -155,6 +167,13 @@ if system_file and form_file:
                     y1,y2,y3,y4=A,B,B,C
                 else:
                     y1,y2,y3,y4=A,B,A,B
+
+            # ✅ UPDATE usage (VIKTIGT)
+            usage[A]["År1"] += 1
+            usage[B]["År2"] += 1
+            usage[B]["År3"] += 1
+            if y4:
+                usage[C]["År4"] += 1
 
             results.append({
                 "Student":student,
@@ -170,7 +189,7 @@ if system_file and form_file:
 
 
         # =========================
-        # MANUELL EDITOR
+        # MANUELL EDITOR (OFÖRÄNDRAD)
         # =========================
         st.header("📝 Justera placering manuellt")
 
@@ -208,7 +227,7 @@ if system_file and form_file:
 
 
         # =========================
-        # SLÅ IHOP AUTO + MANUELLT ✅
+        # SLÅ IHOP (OFÖRÄNDRAT)
         # =========================
         export_rows=[]
 
@@ -217,7 +236,6 @@ if system_file and form_file:
             student=r["Student"]
 
             if student in st.session_state.manual_assignments:
-
                 merged={
                     "Student":student,
                     "Ort":r["Ort"],
@@ -227,7 +245,6 @@ if system_file and form_file:
                     "År3":st.session_state.manual_assignments[student]["År3"],
                     "År4":st.session_state.manual_assignments[student]["År4"],
                 }
-
             else:
                 merged=r
 
@@ -237,7 +254,7 @@ if system_file and form_file:
 
 
         # =========================
-        # EXCEL (3 BLAD ✅)
+        # EXCEL (OFÖRÄNDRAD)
         # =========================
         def build_excel(df):
 
@@ -248,7 +265,6 @@ if system_file and form_file:
             border=Border(top=thin,left=thin,right=thin,bottom=thin)
             fill=PatternFill("solid","D9EAF7")
 
-            # -------- PLACERINGAR --------
             ws=wb.active
             ws.title="Placeringar"
 
@@ -298,15 +314,12 @@ if system_file and form_file:
                             ws.cell(rr,cc).border=border
 
 
-            # -------- STUDENTER --------
             ws2=wb.create_sheet("Studenter")
             ws2.append(["Student","Ort","Region","År1","År2","År3","År4"])
 
             for _,r in df.iterrows():
                 ws2.append(list(r))
 
-
-            # -------- KONTROLL --------
             ws3=wb.create_sheet("Kontroll")
             ws3.append(["Student","Antal skolor","Status"])
 
@@ -333,7 +346,6 @@ if system_file and form_file:
                 ws3.cell(row,3).fill=color
 
 
-            # -------- AUTOBREDD --------
             for sheet in wb.worksheets:
                 for col in sheet.columns:
                     length=max(len(str(cell.value)) if cell.value else 0 for cell in col)
@@ -353,4 +365,3 @@ if system_file and form_file:
                 file_name="kull_resultat.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-
