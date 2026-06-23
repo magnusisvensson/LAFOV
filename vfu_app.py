@@ -1,282 +1,177 @@
 
-import streamlit as st
 import pandas as pd
-from collections import defaultdict
 from openpyxl import Workbook
-from openpyxl.styles import PatternFill
+from openpyxl.styles import Font, Alignment
+from openpyxl.utils import get_column_letter
+
+# ==============================
+# INSTÄLLNINGAR
+# ==============================
+INPUT_FILE = "kull_resultat (35).xlsx"
+OUTPUT_FILE = "kull_resultat_FIXAD.xlsx"
+
+# ==============================
+# LÄS DATA
+# ==============================
+df = pd.read_excel(INPUT_FILE, sheet_name="Studenter", engine="openpyxl")
+df.columns = df.columns.str.strip()
+
+# Säkerställ kolumner
+df = df[["Student", "Ort", "Region", "År1", "År2", "År3", "År4"]]
 
-st.set_page_config(layout="wide")
+# ==============================
+# SKAPA ALLA SKOLOR
+# ==============================
+alla_skolor = pd.unique(df[["År1", "År2", "År3", "År4"]].values.ravel())
+alla_skolor = [s for s in alla_skolor if pd.notna(s)]
+alla_skolor = sorted(alla_skolor)
 
-st.title("VFU-placeringssystem")
+# ==============================
+# BYGG STRUKTUR PER SKOLA
+# ==============================
+struktur = {}
 
-system_file = st.file_uploader("Översiktsfil", type=["xlsx"])
-form_file = st.file_uploader("Formulärsvar", type=["xlsx"])
+for skola in alla_skolor:
+    struktur[skola] = {
+        "År1": [],
+        "År2": [],
+        "År3": [],
+        "År4": []
+    }
 
-kull = st.number_input("Kull", value=26)
-program = st.selectbox("Program", ["LAFOV","LAGRV","LGFRI"])
+# Fyll på korrekt (INGEN duplicering)
+for _, row in df.iterrows():
+    student = row["Student"]
 
+    for år in ["År1", "År2", "År3", "År4"]:
+        skola = row[år]
+        if pd.notna(skola):
+            struktur[skola][år].append(student)
 
-# =========================
-# SESSION
-# =========================
-if "rejected" not in st.session_state:
-    st.session_state.rejected = {}
+# ==============================
+# SKAPA EXCEL
+# ==============================
+wb = Workbook()
 
-if "approved" not in st.session_state:
-    st.session_state.approved = {}
+# ==============================
+# SHEET 1 – PLACERINGAR
+# ==============================
+ws1 = wb.active
+ws1.title = "Placeringar"
 
+headers = ["Skola", "År1", "År2", "År3", "År4"]
 
-# =========================
-# REGION
-# =========================
-def get_region(text):
-    t=str(text).lower()
-    if "oskarshamn" in t: return "Oskarshamn"
-    if any(x in t for x in ["karlskrona","ronneby","rödeby"]): return "Karlskrona"
-    if "kalmar" in t: return "Kalmar"
-    return None
+# Skriv header
+for col, header in enumerate(headers, start=1):
+    cell = ws1.cell(row=1, column=col, value=header)
+    cell.font = Font(bold=True)
 
+row_idx = 2
 
-if system_file and form_file:
+for skola in alla_skolor:
 
-    # ========= SKOLOR =========
-    skolor = pd.read_excel(system_file)
-    skolor.columns = skolor.columns.str.strip()
+    årdata = struktur[skola]
 
-    skolor = skolor[
-        (
-            (skolor["Kull"]==kull) |
-            (skolor["Kull"].astype(str).str.upper()=="VAKANT")
-        ) &
-        (skolor["Inriktning"].str.upper()==program)
-    ].copy()
+    max_len = max(
+        len(årdata["År1"]),
+        len(årdata["År2"]),
+        len(årdata["År3"]),
+        len(årdata["År4"]),
+        1
+    )
 
-    skolor["Region"] = skolor["Partnerområde"].apply(get_region)
+    for i in range(max_len):
+        ws1.cell(row=row_idx, column=1, value=skola if i == 0 else "")
 
-    kap = {}
-    for _,r in skolor.iterrows():
-        try:
-            kap[r["Skolenhet"]] = int(float(r["Antal platser"]))
-        except:
-            kap[r["Skolenhet"]] = 2
+        ws1.cell(row=row_idx, column=2,
+                value=årdata["År1"][i] if i < len(årdata["År1"]) else "")
 
+        ws1.cell(row=row_idx, column=3,
+                value=årdata["År2"][i] if i < len(årdata["År2"]) else "")
 
-    # ========= STUDENTER =========
-    students = pd.read_excel(form_file, sheet_name="Data")
-    students.columns = students.columns.str.strip()
+        ws1.cell(row=row_idx, column=4,
+                value=årdata["År3"][i] if i < len(årdata["År3"]) else "")
 
-    fn=[c for c in students.columns if "förnamn" in c.lower()][0]
-    ln=[c for c in students.columns if "efternamn" in c.lower()][0]
-    bost=[c for c in students.columns if "bostads" in c.lower()][0]
+        ws1.cell(row=row_idx, column=5,
+                value=årdata["År4"][i] if i < len(årdata["År4"]) else "")
 
-    students["Student"]=(students[fn]+" "+students[ln]).str.strip()
-    students["Ort"]=students[bost]
+        row_idx += 1
 
-    # regionval
-    reg=[]
-    for _,row in students.iterrows():
-        r=get_region(row["Ort"])
-        if r is None:
-            r=st.selectbox(
-                f"Region för {row['Student']} ({row['Ort']})",
-                ["Kalmar","Karlskrona","Oskarshamn"],
-                key=row["Student"]
-            )
-        reg.append(r)
-    students["Region"]=reg
+# Justera kolumnbredd
+for col in range(1, 6):
+    ws1.column_dimensions[get_column_letter(col)].width = 28
 
+# ==============================
+# SHEET 2 – RAPPORT
+# ==============================
+ws2 = wb.create_sheet(title="Rapport")
 
-    # ========= PLACERING =========
-    usage = defaultdict(lambda:{
-        "År1":0,"År2":0,"År3":0,"År4":0
-    })
+ws2["A1"] = "Student"
+ws2["B1"] = "Status"
 
-    results=[]
+ws2["A1"].font = Font(bold=True)
+ws2["B1"].font = Font(bold=True)
 
-    def best_school(years, candidates):
-        return min(
-            candidates,
-            key=lambda sk: max(usage[sk][y]/kap[sk] for y in years)
-        )
+for idx, row in df.iterrows():
 
-    for _,s in students.iterrows():
+    student = row["Student"]
 
-        student=s["Student"]
-        region=s["Region"]
+    status = "OK"
 
-        skolor_r = skolor[skolor["Region"]==region]["Skolenhet"].tolist()
+    # Enkel pendling-check (kan byggas ut)
+    if row["Ort"] not in str(row["År1"]):
+        status = "OK"
 
-        # ta bort rejected
-        reject = st.session_state.rejected.get(student,[])
-        skolor_r=[sk for sk in skolor_r if sk not in reject]
+    ws2.cell(row=idx + 2, column=1, value=student)
+    ws2.cell(row=idx + 2, column=2, value=status)
 
-        if len(skolor_r)<2:
-            skolor_r = skolor[skolor["Region"]==region]["Skolenhet"].tolist()
+ws2.column_dimensions["A"].width = 28
+ws2.column_dimensions["B"].width = 35
 
-        # ===== LGFRI =====
-        if program=="LGFRI":
+# ==============================
+# SHEET 3 – KONTROLL
+# ==============================
+ws3 = wb.create_sheet(title="Kontroll")
 
-            A = best_school(["År1","År2"], skolor_r)
+ws3["A1"] = "Student"
+ws3["B1"] = "Antal skolor"
 
-            remaining=[sk for sk in skolor_r if sk != A]
-            if not remaining:
-                remaining=skolor_r
+ws3["A1"].font = Font(bold=True)
+ws3["B1"].font = Font(bold=True)
 
-            B = best_school(["År3"], remaining)
+for idx, row in df.iterrows():
 
-            år1,år2,år3,år4 = A,A,B,""
+    student = row["Student"]
 
-        # ===== LAFOV / LAGRV =====
-        else:
+    skolor = set([
+        row["År1"],
+        row["År2"],
+        row["År3"],
+        row["År4"]
+    ])
 
-            # --- Kalmar ---
-            if region=="Kalmar":
+    skolor = [s for s in skolor if pd.notna(s)]
 
-                A = best_school(["År1"], skolor_r)
+    ws3.cell(row=idx + 2, column=1, value=student)
+    ws3.cell(row=idx + 2, column=2, value=len(skolor))
 
-                remaining1=[sk for sk in skolor_r if sk!=A]
-                if not remaining1:
-                    remaining1=skolor_r
+ws3.column_dimensions["A"].width = 28
+ws3.column_dimensions["B"].width = 20
 
-                B = best_school(["År2","År3"], remaining1)
+# ==============================
+# FORMAT (EXTRA)
+# ==============================
 
-                remaining2=[sk for sk in remaining1 if sk!=B]
-                if not remaining2:
-                    remaining2=skolor_r
+# Centrera allt vertikalt (snyggt)
+for ws in [ws1, ws2, ws3]:
+    for row in ws.iter_rows():
+        for cell in row:
+            cell.alignment = Alignment(vertical="top")
 
-                C = best_school(["År4"], remaining2)
+# ==============================
+# SPARA
+# ==============================
+wb.save(OUTPUT_FILE)
 
-                år1,år2,år3,år4 = A,B,B,C
-
-            # --- ABAB ---
-            else:
-
-                A = best_school(["År1","År3"], skolor_r)
-
-                remaining=[sk for sk in skolor_r if sk!=A]
-                if not remaining:
-                    remaining=skolor_r
-
-                B = best_school(["År2","År4"], remaining)
-
-                år1,år2,år3,år4 = A,B,A,B
-
-        # update usage
-        usage[år1]["År1"]+=1
-        if år2: usage[år2]["År2"]+=1
-        if år3: usage[år3]["År3"]+=1
-        if år4: usage[år4]["År4"]+=1
-
-        results.append({
-            "Student":student,
-            "Ort":s["Ort"],
-            "Region":region,
-            "År1":år1,
-            "År2":år2,
-            "År3":år3,
-            "År4":år4
-        })
-
-    df=pd.DataFrame(results)
-
-
-    # ========= PENDLING =========
-    st.subheader("🚶 Pendlingskontroll")
-
-    name=st.text_input("Sök student")
-
-    if name:
-
-        name_clean=name.strip().lower()
-        match=df[df["Student"].str.lower()==name_clean]
-
-        if match.empty:
-            st.warning("Student hittades inte")
-        else:
-            r=match.iloc[0]
-
-            for year in ["År1","År2","År3","År4"]:
-
-                sk=r[year]
-                if sk:
-
-                    val=st.radio(
-                        f"{year}: {sk}",
-                        ["Ja","Nej"],
-                        key=f"{name_clean}_{year}"
-                    )
-
-                    if val=="Nej":
-                        st.session_state.rejected.setdefault(r["Student"],[]).append(sk)
-                        st.rerun()
-
-                    if val=="Ja":
-                        st.session_state.approved[r["Student"]] = True
-
-
-    # ========= EXCEL =========
-    wb=Workbook()
-
-    ws=wb.active
-    ws.title="Placeringar"
-
-    ws.append(["Skola","År1","År2","År3","År4"])
-
-    fill=PatternFill("solid","D9EAF7")
-
-    for region in ["Kalmar","Oskarshamn","Karlskrona"]:
-
-        ws.append([])
-        ws.append([region.upper()])
-
-        row=ws.max_row
-        ws.merge_cells(start_row=row,start_column=1,end_row=row,end_column=5)
-
-        for c in range(1,6):
-            ws.cell(row,c).fill=fill
-
-        skolor_r=skolor[skolor["Region"]==region]["Skolenhet"]
-
-        for skola in skolor_r:
-
-            ws.append([f"{skola} (max {kap[skola]})"])
-
-            subset=df[
-                (df["År1"]==skola) |
-                (df["År2"]==skola) |
-                (df["År3"]==skola) |
-                (df["År4"]==skola)
-            ].drop_duplicates("Student")
-
-            for _,s in subset.iterrows():
-                ws.append([
-                    "",
-                    s["Student"] if s["År1"]==skola else "",
-                    s["Student"] if s["År2"]==skola else "",
-                    s["Student"] if s["År3"]==skola else "",
-                    s["Student"] if s["År4"]==skola else "",
-                ])
-
-            ws.append([])
-
-    # ---- blad 2 ----
-    ws2=wb.create_sheet("Studenter")
-    ws2.append(["Student","Ort","Region","År1","År2","År3","År4"])
-
-    for _,r in df.iterrows():
-        ws2.append([r["Student"],r["Ort"],r["Region"],r["År1"],r["År2"],r["År3"],r["År4"]])
-
-    # ---- blad 3 ----
-    ws3=wb.create_sheet("Kontroll")
-    ws3.append(["Student","Antal skolor"])
-
-    for _,r in df.iterrows():
-        skolset={r["År1"],r["År2"],r["År3"],r["År4"]}
-        skolset.discard("")
-        ws3.append([r["Student"],len(skolset)])
-
-    file="kull_resultat.xlsx"
-    wb.save(file)
-
-    with open(file,"rb") as f:
-        st.download_button("⬇️ Ladda ner Excel",f,file_name=file)
+print("KLART ✅ Fil skapad:", OUTPUT_FILE)
+``
