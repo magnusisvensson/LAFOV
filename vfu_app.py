@@ -17,7 +17,7 @@ file2 = st.file_uploader("Fil 2", type=["xlsx"])
 if file1 and file2:
 
     # ==============================
-    # Identifiera filtyper
+    # Identifiera studentfil
     # ==============================
     def innehåller_studentdata(excel):
         for sheet in excel.sheet_names:
@@ -40,7 +40,7 @@ if file1 and file2:
     # ==============================
     def hitta_blad(excel, typ):
 
-        # prioritera DATA-blad
+        # prioritera "Data"
         for s in excel.sheet_names:
             if s.lower() == "data":
                 return s
@@ -51,7 +51,6 @@ if file1 and file2:
 
             if typ == "student" and "förnamn" in cols:
                 return s
-
             if typ == "skola" and "skolenhet" in cols:
                 return s
 
@@ -123,49 +122,44 @@ if file1 and file2:
     # ==============================
     # Tilldelning
     # ==============================
-    def tilldela(n, skolor, kap):
-        res = {}
+    def tilldela(studenter, skolor, kap, antal):
+        resultat = {}
         idx = 0
+        kvar = kap.copy()
 
-        for student in n:
+        for student in studenter:
             val = []
-            kvar = kap.copy()
 
-            for _ in range(10):  # säkerhetsloop
-
+            while len(val) < antal:
                 s = skolor[idx % len(skolor)]
 
                 if kvar[s] > 0:
                     val.append(s)
                     kvar[s] -= 1
 
-                if len(val) == target:
-                    break
-
                 idx += 1
 
-            res[student] = val
+            resultat[student] = val
 
-        return res
+        return resultat
 
     # ==============================
     # Schema
     # ==============================
     if vald_inriktning == "LGFRI":
-        target = 2
-        data = tilldela(studenter, skolor, kapacitet)
+
+        data = tilldela(studenter, skolor, kapacitet, 2)
 
         schema = [[s, A, A, B] for s, (A, B) in data.items()]
         cols = ["Student", "År1", "År2", "År3"]
 
     else:
+
         if "Kalmar" in region_typ:
-            target = 3
-            data = tilldela(studenter, skolor, kapacitet)
+            data = tilldela(studenter, skolor, kapacitet, 3)
             schema = [[s, A, B, B, C] for s, (A, B, C) in data.items()]
         else:
-            target = 2
-            data = tilldela(studenter, skolor, kapacitet)
+            data = tilldela(studenter, skolor, kapacitet, 2)
             schema = [[s, A, B, A, B] for s, (A, B) in data.items()]
 
         cols = ["Student", "År1", "År2", "År3", "År4"]
@@ -207,13 +201,19 @@ if file1 and file2:
         ws1.title = "Placeringar"
         ws1.append(cols)
 
-        for c in ws1c.font = Font(bold=True)
+        # 🔧 FIXAT HÄR
+        for cell in ws1[1]:
+            cell.font = Font(bold=True)
 
         for _, r in schema_df.iterrows():
             ws1.append(list(r))
 
         ws2 = wb.create_sheet("Rapport")
         ws2.append(["Student", "AktivOrt", "Vald ort", "OK"])
+
+        # 🔧 FIXAT
+        for cell in ws2[1]:
+            cell.font = Font(bold=True)
 
         for _, r in stud_df.iterrows():
             s = r["Student"]
@@ -228,6 +228,10 @@ if file1 and file2:
         ws3 = wb.create_sheet("Kontroll")
         ws3.append(["Student", "Status"])
 
+        # 🔧 FIXAT
+        for cell in ws3[1]:
+            cell.font = Font(bold=True)
+
         for s in studenter:
             ws3.append([s, "Klar" if ok_status.get(s) else "Ej klar"])
 
@@ -236,4 +240,8 @@ if file1 and file2:
         out.seek(0)
         return out
 
-    st.download_button("Ladda ner Excel", data=skapa_excel(), file_name="VFU_resultat.xlsx")
+    st.download_button(
+        "Ladda ner Excel",
+        data=skapa_excel(),
+        file_name="VFU_resultat.xlsx"
+    )
