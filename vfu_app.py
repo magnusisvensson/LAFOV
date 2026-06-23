@@ -1,9 +1,11 @@
 
 import streamlit as st
 import pandas as pd
- Sidefrom collections import defaultdict, deque
 
-st.set_page_config(layout="wide")
+from collections import defaultdict, deque
+
+from openpyxl import Workbook
+from openpyxl.styles import PatternFill, Border, Side
 
 st.title("VFU-placeringssystem")
 
