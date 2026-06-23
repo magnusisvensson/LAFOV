@@ -1,9 +1,7 @@
 
 import streamlit as st
 import pandas as pd
-from collections import defaultdict, deque
-from openpyxl import Workbook
-from openpyxl.styles import PatternFill, Border, Side
+ Sidefrom collections import defaultdict, deque
 
 st.set_page_config(layout="wide")
 
@@ -25,6 +23,7 @@ if "step" not in st.session_state:
 if "student_regions" not in st.session_state:
     st.session_state.student_regions = {}
 
+# ✅ NY: reject per (student, år)
 if "rejected" not in st.session_state:
     st.session_state.rejected = {}
 
@@ -37,7 +36,6 @@ def get_region(text):
 
     if "oskarshamn" in t:
         return "Oskarshamn"
-
     if any(x in t for x in ["karlskrona","ronneby","rödeby"]):
         return "Karlskrona"
 
@@ -55,16 +53,16 @@ if system_file and form_file:
 
     skolor = skolor[
         (
-            (skolor["Kull"] == kull) |
-            (skolor["Kull"].astype(str).str.upper() == "VAKANT")
+            (skolor["Kull"]==kull) |
+            (skolor["Kull"].astype(str).str.upper()=="VAKANT")
         ) &
-        (skolor["Inriktning"].str.upper() == program)
+        (skolor["Inriktning"].str.upper()==program)
     ].copy()
 
     skolor["Region"] = skolor["Partnerområde"].apply(get_region)
 
     kap = {}
-    for _, r in skolor.iterrows():
+    for _,r in skolor.iterrows():
         try:
             kap[r["Skolenhet"]] = int(float(r["Antal platser"]))
         except:
@@ -99,16 +97,12 @@ if system_file and form_file:
             name = row["Student"]
             ort_text = str(row["Ort"]).lower()
 
-            # ✅ AUTO
             if "kalmar" in ort_text:
                 region = "Kalmar"
-
             elif "karlskrona" in ort_text:
                 region = "Karlskrona"
-
             elif "oskarshamn" in ort_text:
                 region = "Oskarshamn"
-
             else:
                 default = get_region(row["Ort"])
                 saved = st.session_state.student_regions.get(name, default)
@@ -146,6 +140,11 @@ if system_file and form_file:
             for r in ["Kalmar","Karlskrona","Oskarshamn"]
         }
 
+        # ✅ hjälpfunktion
+        def filter_year(student, year, skol_list):
+            rejected = st.session_state.rejected.get((student, year), set())
+            return [sk for sk in skol_list if sk not in rejected]
+
         for _, s in students.iterrows():
 
             student = s["Student"]
@@ -156,22 +155,42 @@ if system_file and form_file:
 
             skolor_r = list(queue)
 
-            reject = st.session_state.rejected.get(student,[])
-            skolor_r = [sk for sk in skolor_r if sk not in reject]
-
-            if len(skolor_r) < 3:
-                skolor_r = list(queue)
-
-            A = skolor_r[0]
-            B = skolor_r[1] if len(skolor_r)>1 else A
-            C = skolor_r[2] if len(skolor_r)>2 else B
-
+            # =========================
+            # VAL MED REJECT PER ÅR
+            # =========================
             if program == "LGFRI":
+
+                A_list = filter_year(student, "År1", skolor_r)
+                A = A_list[0] if A_list else skolor_r[0]
+
+                B_list = filter_year(student, "År3", skolor_r)
+                B = B_list[0] if B_list else skolor_r[1]
+
                 y1,y2,y3,y4 = A,A,B,""
+
             else:
+
                 if region == "Kalmar":
+
+                    A_list = filter_year(student,"År1",skolor_r)
+                    A = A_list[0] if A_list else skolor_r[0]
+
+                    B_list = filter_year(student,"År2",skolor_r)
+                    B = B_list[0] if B_list else skolor_r[1]
+
+                    C_list = filter_year(student,"År4",skolor_r)
+                    C = C_list[0] if C_list else skolor_r[2]
+
                     y1,y2,y3,y4 = A,B,B,C
+
                 else:
+
+                    A_list = filter_year(student,"År1",skolor_r)
+                    A = A_list[0] if A_list else skolor_r[0]
+
+                    B_list = filter_year(student,"År2",skolor_r)
+                    B = B_list[0] if B_list else skolor_r[1]
+
                     y1,y2,y3,y4 = A,B,A,B
 
             usage[y1]["År1"] += 1
@@ -190,7 +209,7 @@ if system_file and form_file:
 
 
         # =========================
-        # PENDLING
+        # ✅ PENDLING – ITERATIV
         # =========================
         st.subheader("🚶 Pendlingskontroll")
 
@@ -210,14 +229,23 @@ if system_file and form_file:
 
                     if sk:
 
+                        st.write(f"{year}: {sk}")
+
                         val = st.radio(
-                            f"{year}: {sk}",
+                            f"Pendling OK?",
                             ["Ja","Nej"],
                             key=f"{r['Student']}_{year}"
                         )
 
                         if val == "Nej":
-                            st.session_state.rejected.setdefault(r["Student"], []).append(sk)
+
+                            key = (r["Student"], year)
+
+                            if key not in st.session_state.rejected:
+                                st.session_state.rejected[key] = set()
+
+                            st.session_state.rejected[key].add(sk)
+
                             st.rerun()
 
 
@@ -274,44 +302,14 @@ if system_file and form_file:
                         ws.cell(rr,cc).border = border
 
 
-        # ----- STUDENTER -----
-        ws2 = wb.create_sheet("Studenter")
-        ws2.append(["Student","Ort","Region","År1","År2","År3","År4"])
-
-        for _, r in df.iterrows():
-            ws2.append(list(r))
-
-
-        # ----- KONTROLL -----
-        ws3 = wb.create_sheet("Kontroll")
-        ws3.append(["Student","Antal skolor","Status"])
-
-        fill_ok = PatternFill("solid","C6EFCE")
-        fill_warn = PatternFill("solid","FFEB9C")
-        fill_bad = PatternFill("solid","FFC7CE")
-
-        for _, r in df.iterrows():
-
-            skolset={r["År1"],r["År2"],r["År3"],r["År4"]}
-            skolset.discard("")
-
-            antal=len(skolset)
-
-            if antal < 2:
-                status="⚠"
-                color=fill_warn
-            else:
-                status="OK"
-                color=fill_ok
-
-            ws3.append([r["Student"], antal, status])
-
-            row = ws3.max_row
-            ws3.cell(row,3).fill=color
-
-
         file="kull_resultat.xlsx"
         wb.save(file)
 
         with open(file,"rb") as f:
-            st.download_button("⬇️ Ladda ner Excel",f,file_name=file)
+            st.download_button(
+                "⬇️ Ladda ner Excel",
+                data=f,
+                file_name=file,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+from openpyxl import Workbook
