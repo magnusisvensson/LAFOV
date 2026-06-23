@@ -1,52 +1,73 @@
 
 import pandas as pd
+from collections import defaultdict
 from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment
-from openpyxl.utils import get_column_letter
+from openpyxl.styles import Font, PatternFill
 
 # ==============================
-# INSTÄLLNINGAR
+# FILER
 # ==============================
-INPUT_FILE = "kull_resultat (35).xlsx"
-OUTPUT_FILE = "kull_resultat_FIXAD.xlsx"
+STUDENT_FIL = "kull_resultat (35).xlsx"
+OVERSIKT_FIL = "Helhetsbild övningsskolor.xlsx"
+OUTPUT_FIL = "VFU_RESULTAT_KLAR.xlsx"
 
 # ==============================
-# LÄS DATA
+# LÄS IN DATA
 # ==============================
-df = pd.read_excel(INPUT_FILE, sheet_name="Studenter", engine="openpyxl")
-df.columns = df.columns.str.strip()
+stud_df = pd.read_excel(STUDENT_FIL, sheet_name="Studenter", engine="openpyxl")
+skol_df = pd.read_excel(OVERSIKT_FIL, sheet_name="SKOLOR", engine="openpyxl")
 
-# Säkerställ kolumner
-df = df[["Student", "Ort", "Region", "År1", "År2", "År3", "År4"]]
-
-# ==============================
-# SKAPA ALLA SKOLOR
-# ==============================
-alla_skolor = pd.unique(df[["År1", "År2", "År3", "År4"]].values.ravel())
-alla_skolor = [s for s in alla_skolor if pd.notna(s)]
-alla_skolor = sorted(alla_skolor)
+stud_df.columns = stud_df.columns.str.strip()
+skol_df.columns = skol_df.columns.str.strip()
 
 # ==============================
-# BYGG STRUKTUR PER SKOLA
+# FILTRERA – LAFOV 26
 # ==============================
-struktur = {}
+lafov_df = skol_df[
+    (skol_df["Kull"] == 26) &
+    (skol_df["Inriktning"] == "LAFOV")
+]
 
-for skola in alla_skolor:
-    struktur[skola] = {
-        "År1": [],
-        "År2": [],
-        "År3": [],
-        "År4": []
-    }
+# ==============================
+# BYGG KAPACITET
+# ==============================
+kapacitet = {}
 
-# Fyll på korrekt (INGEN duplicering)
-for _, row in df.iterrows():
+for _, row in lafov_df.iterrows():
+    skola = row["Skolenhet"]
+    platser = row["Antal platser"]
+
+    if pd.notna(skola) and pd.notna(platser):
+        kapacitet[skola] = int(platser)
+
+# ==============================
+# INITIERA PLACERING
+# ==============================
+placering = defaultdict(list)
+
+# sortera skolor (störst först = bättre balans)
+skolor_sorterade = sorted(kapacitet, key=lambda x: kapacitet[x], reverse=True)
+
+# ==============================
+# FÖRDELNINGSALGORITM
+# ==============================
+for _, row in stud_df.iterrows():
+
     student = row["Student"]
 
-    for år in ["År1", "År2", "År3", "År4"]:
-        skola = row[år]
-        if pd.notna(skola):
-            struktur[skola][år].append(student)
+    placerad = False
+
+    # 1. Försök placera i ordning (balanserat)
+    for skola in skolor_sorterade:
+        if len(placering[skola]) < kapacitet[skola]:
+            placering[skola].append(student)
+            placerad = True
+            break
+
+    # 2. Om inget funkar (edge case)
+    if not placerad:
+        minst = min(placering, key=lambda x: len(placering[x]))
+        placering[minst].append(student)
 
 # ==============================
 # SKAPA EXCEL
@@ -54,124 +75,115 @@ for _, row in df.iterrows():
 wb = Workbook()
 
 # ==============================
-# SHEET 1 – PLACERINGAR
+# 1. PLACERINGAR (MANUELL LAYOUT)
 # ==============================
 ws1 = wb.active
 ws1.title = "Placeringar"
 
-headers = ["Skola", "År1", "År2", "År3", "År4"]
+headers = ["Skola", "Studenter"]
+ws1.append(headers)
 
-# Skriv header
-for col, header in enumerate(headers, start=1):
-    cell = ws1.cell(row=1, column=col, value=header)
+for cell in ws1[1]:
     cell.font = Font(bold=True)
 
 row_idx = 2
 
-for skola in alla_skolor:
+for skola in skolor_sorterade:
 
-    årdata = struktur[skola]
+    studenter = placering[skola]
 
-    max_len = max(
-        len(årdata["År1"]),
-        len(årdata["År2"]),
-        len(årdata["År3"]),
-        len(årdata["År4"]),
-        1
-    )
+    if len(studenter) == 0:
+        ws1.append([skola, ""])
+        continue
 
-    for i in range(max_len):
-        ws1.cell(row=row_idx, column=1, value=skola if i == 0 else "")
-
-        ws1.cell(row=row_idx, column=2,
-                value=årdata["År1"][i] if i < len(årdata["År1"]) else "")
-
-        ws1.cell(row=row_idx, column=3,
-                value=årdata["År2"][i] if i < len(årdata["År2"]) else "")
-
-        ws1.cell(row=row_idx, column=4,
-                value=årdata["År3"][i] if i < len(årdata["År3"]) else "")
-
-        ws1.cell(row=row_idx, column=5,
-                value=årdata["År4"][i] if i < len(årdata["År4"]) else "")
-
-        row_idx += 1
-
-# Justera kolumnbredd
-for col in range(1, 6):
-    ws1.column_dimensions[get_column_letter(col)].width = 28
+    for i, s in enumerate(studenter):
+        if i == 0:
+            ws1.append([f"{skola} (max {kapacitet[skola]})", s])
+        else:
+            ws1.append(["", s])
 
 # ==============================
-# SHEET 2 – RAPPORT
+# 2. RAPPORT (MED OK-FUNKTION)
 # ==============================
-ws2 = wb.create_sheet(title="Rapport")
+ws2 = wb.create_sheet("Rapport")
 
-ws2["A1"] = "Student"
-ws2["B1"] = "Status"
+headers = ["Student", "Hemort", "Vald ort", "OK"]
+ws2.append(headers)
 
-ws2["A1"].font = Font(bold=True)
-ws2["B1"].font = Font(bold=True)
+for cell in ws2[1]:
+    cell.font = Font(bold=True)
 
-for idx, row in df.iterrows():
+for _, row in stud_df.iterrows():
 
-    student = row["Student"]
-
-    status = "OK"
-
-    # Enkel pendling-check (kan byggas ut)
-    if row["Ort"] not in str(row["År1"]):
-        status = "OK"
-
-    ws2.cell(row=idx + 2, column=1, value=student)
-    ws2.cell(row=idx + 2, column=2, value=status)
-
-ws2.column_dimensions["A"].width = 28
-ws2.column_dimensions["B"].width = 35
-
-# ==============================
-# SHEET 3 – KONTROLL
-# ==============================
-ws3 = wb.create_sheet(title="Kontroll")
-
-ws3["A1"] = "Student"
-ws3["B1"] = "Antal skolor"
-
-ws3["A1"].font = Font(bold=True)
-ws3["B1"].font = Font(bold=True)
-
-for idx, row in df.iterrows():
-
-    student = row["Student"]
-
-    skolor = set([
-        row["År1"],
-        row["År2"],
-        row["År3"],
-        row["År4"]
+    ws2.append([
+        row["Student"],
+        row["Ort"],
+        "",   # väljs manuellt
+        ""    # skriv OK här
     ])
 
-    skolor = [s for s in skolor if pd.notna(s)]
+# ==============================
+# 3. KONTROLL
+# ==============================
+ws3 = wb.create_sheet("Kontroll")
 
-    ws3.cell(row=idx + 2, column=1, value=student)
-    ws3.cell(row=idx + 2, column=2, value=len(skolor))
+headers = ["Student", "Status", "Kommentar"]
+ws3.append(headers)
 
-ws3.column_dimensions["A"].width = 28
-ws3.column_dimensions["B"].width = 20
+for cell in ws3[1]:
+    cell.font = Font(bold=True)
+
+for _, row in stud_df.iterrows():
+
+    ws3.append([
+        row["Student"],
+        "Väntar på OK",
+        ""
+    ])
 
 # ==============================
-# FORMAT (EXTRA)
+# FÄRGER (VISUELLT STÖD)
 # ==============================
+green_fill = PatternFill(start_color="C6EFCE", fill_type="solid")
+yellow_fill = PatternFill(start_color="FFF3CD", fill_type="solid")
 
-# Centrera allt vertikalt (snyggt)
+# ==============================
+# KOPPLA RAPPORT → KONTROLL
+# ==============================
+for i in range(2, ws2.max_row + 1):
+
+    ok_value = ws2.cell(row=i, column=4).value
+    student = ws2.cell(row=i, column=1).value
+
+    kontroll_rad = i
+
+    if ok_value == "OK":
+        ws3.cell(row=kontroll_rad, column=2, value="Klar")
+        ws3.cell(row=kontroll_rad, column=2).fill = green_fill
+    else:
+        ws3.cell(row=kontroll_rad, column=2, value="Ej klar")
+        ws3.cell(row=kontroll_rad, column=2).fill = yellow_fill
+
+# ==============================
+# AUTO-BREDD
+# ==============================
 for ws in [ws1, ws2, ws3]:
-    for row in ws.iter_rows():
-        for cell in row:
-            cell.alignment = Alignment(vertical="top")
+    for col in ws.columns:
+        max_length = 0
+        col_letter = col[0].column_letter
+
+        for cell in col:
+            try:
+                if cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
+            except:
+                pass
+
+        ws.column_dimensions[col_letter].width = max_length + 2
 
 # ==============================
-# SPARA
+# SPARA FIL
 # ==============================
-wb.save(OUTPUT_FILE)
+wb.save(OUTPUT_FIL)
 
-print("KLART ✅ Fil skapad:", OUTPUT_FILE)
-
+print("✅ KLAR – full version skapad:", OUTPUT_FIL)
