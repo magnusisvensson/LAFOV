@@ -42,9 +42,14 @@ def get_region(text):
 
 if system_file and form_file:
 
-    # ===== SKOLOR =====
+    # =========================
+    # SKOLOR
+    # =========================
     skolor = pd.read_excel(system_file)
     skolor.columns = skolor.columns.str.strip()
+
+    # ✅ RENGÖR SKOLNAMN (fix för KeyError)
+    skolor["Skolenhet"] = skolor["Skolenhet"].astype(str).str.strip()
 
     skolor = skolor[
         (
@@ -56,9 +61,10 @@ if system_file and form_file:
 
     skolor["Region"] = skolor["Partnerområde"].apply(get_region)
 
-    # ✅ ta bort trasiga rader
+    # ✅ ta bort trasiga regioner
     skolor = skolor[skolor["Region"].notna()]
 
+    # ✅ kap
     kap = {}
     for _,r in skolor.iterrows():
         try:
@@ -67,7 +73,9 @@ if system_file and form_file:
             kap[r["Skolenhet"]] = 2
 
 
-    # ===== STUDENTER =====
+    # =========================
+    # STUDENTER
+    # =========================
     students = pd.read_excel(form_file, sheet_name="Data")
     students.columns = students.columns.str.strip()
 
@@ -111,27 +119,40 @@ if system_file and form_file:
 
 
     # =========================
-    # 🟢 STEG 2 – PLACERING + PENDLING
+    # 🟢 STEG 2 – PLACERING
     # =========================
     if st.session_state.step == 2:
 
         st.header("2. Placering & pendling")
 
-        # ===== KAP PER ÅR =====
         usage = defaultdict(lambda:{
             "År1":0,"År2":0,"År3":0,"År4":0
         })
 
         results=[]
 
-        # ===== BEST SCHOOL =====
+        # ✅ ROBUST VERSION (fix)
         def best_school(years, candidates):
+
+            # filtrera bort trasig data
+            candidates = [
+                sk for sk in candidates
+                if isinstance(sk,str)
+                and sk.strip() != ""
+                and sk in kap
+            ]
+
+            if not candidates:
+                return None
+
             return min(
                 candidates,
-                key=lambda sk: max(usage[sk][y]/kap[sk] for y in years)
+                key=lambda sk: max(usage[sk].get(y,0)/kap.get(sk,1) for y in years)
             )
 
-        # ===== PLACERING =====
+        # =========================
+        # PLACERING
+        # =========================
         for i,s in students.iterrows():
 
             student = s["Student"]
@@ -139,27 +160,36 @@ if system_file and form_file:
 
             skolor_r = skolor[skolor["Region"]==region]["Skolenhet"].tolist()
 
-            # 🔁 ROTATION → använder ALLA skolor
-            if len(skolor_r) > 0:
+            # ✅ säkerställ lista
+            skolor_r = [sk for sk in skolor_r if isinstance(sk,str) and sk.strip()!=""]
+
+            # ✅ ROTATION (så alla skolor används)
+            if skolor_r:
                 shift = i % len(skolor_r)
                 skolor_r = skolor_r[shift:] + skolor_r[:shift]
 
-            # ta bort rejected
+            # ✅ reject
             reject = st.session_state.rejected.get(student,[])
             skolor_r = [sk for sk in skolor_r if sk not in reject]
 
             if len(skolor_r) < 2:
                 skolor_r = skolor[skolor["Region"]==region]["Skolenhet"].tolist()
 
-            # ===== LOGIK =====
+            # =========================
+            # LGFRI
+            # =========================
             if program == "LGFRI":
 
                 A = best_school(["År1","År2"], skolor_r)
+
                 rest=[sk for sk in skolor_r if sk!=A]
-                B = best_school(rest if rest else skolor_r, ["År3"])
+                B = best_school(["År3"], rest if rest else skolor_r)
 
                 y1,y2,y3,y4 = A,A,B,""
 
+            # =========================
+            # LAFOV/LAGRV
+            # =========================
             else:
 
                 if region == "Kalmar":
@@ -167,10 +197,10 @@ if system_file and form_file:
                     A = best_school(["År1"], skolor_r)
 
                     rest1=[sk for sk in skolor_r if sk!=A]
-                    B = best_school(rest1 if rest1 else skolor_r, ["År2","År3"])
+                    B = best_school(["År2","År3"], rest1 if rest1 else skolor_r)
 
                     rest2=[sk for sk in rest1 if sk!=B]
-                    C = best_school(rest2 if rest2 else skolor_r, ["År4"])
+                    C = best_school(["År4"], rest2 if rest2 else skolor_r)
 
                     y1,y2,y3,y4 = A,B,B,C
 
@@ -179,12 +209,14 @@ if system_file and form_file:
                     A = best_school(["År1","År3"], skolor_r)
 
                     rest=[sk for sk in skolor_r if sk!=A]
-                    B = best_school(rest if rest else skolor_r, ["År2","År4"])
+                    B = best_school(["År2","År4"], rest if rest else skolor_r)
 
                     y1,y2,y3,y4 = A,B,A,B
 
-            # ===== UPDATE =====
-            usage[y1]["År1"]+=1
+            # =========================
+            # UPDATE usage
+            # =========================
+            if y1: usage[y1]["År1"]+=1
             if y2: usage[y2]["År2"]+=1
             if y3: usage[y3]["År3"]+=1
             if y4: usage[y4]["År4"]+=1
@@ -298,3 +330,4 @@ if system_file and form_file:
 
         with open(file,"rb") as f:
             st.download_button("⬇️ Ladda ner Excel",f,file_name=file)
+``
