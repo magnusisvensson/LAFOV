@@ -18,19 +18,23 @@ skol_file = st.file_uploader("Översiktsfil", type=["xlsx"])
 if stud_file and skol_file:
 
     # ==============================
-    # AUTODETEKTERING FUNKTIONER
+    # AUTO-HITTA RÄTT BLAD
     # ==============================
-    def hitta_blad(excel_file, nyckelord):
-        for sheet in excel_file.sheet_names:
-            if nyckelord.lower() in sheet.lower():
-                return sheet
-        return excel_file.sheet_names[0]
+    def hitta_data_blad(excel_file, typ="student"):
 
-    def hitta_kolumn(df, möjliga):
-        for col in df.columns:
-            for m in möjliga:
-                if m.lower() in col.lower():
-                    return col
+        for sheet in excel_file.sheet_names:
+
+            df_test = pd.read_excel(excel_file, sheet_name=sheet, nrows=5)
+            cols = [str(c).lower() for c in df_test.columns]
+
+            if typ == "student":
+                if any("förnamn" in c for c in cols) and any("efternamn" in c for c in cols):
+                    return sheet
+
+            if typ == "skola":
+                if any("skolenhet" in c for c in cols) and any("platser" in c for c in cols):
+                    return sheet
+
         return None
 
     # ==============================
@@ -39,50 +43,38 @@ if stud_file and skol_file:
     excel_stud = pd.ExcelFile(stud_file)
     excel_skol = pd.ExcelFile(skol_file)
 
-    stud_df = pd.read_excel(excel_stud, sheet_name=hitta_blad(excel_stud, "data"))
-    skol_df = pd.read_excel(excel_skol, sheet_name=hitta_blad(excel_skol, "skol"))
+    stud_sheet = hitta_data_blad(excel_stud, "student")
+    skol_sheet = hitta_data_blad(excel_skol, "skola")
+
+    if not stud_sheet:
+        st.error("❌ Hittar inget datablad i studentfilen")
+        st.write("Tillgängliga blad:", excel_stud.sheet_names)
+        st.stop()
+
+    if not skol_sheet:
+        st.error("❌ Hittar inget skolblad i översiktsfilen")
+        st.write("Tillgängliga blad:", excel_skol.sheet_names)
+        st.stop()
+
+    st.success(f"Studentblad: {stud_sheet}")
+    st.success(f"Skolblad: {skol_sheet}")
+
+    stud_df = pd.read_excel(excel_stud, sheet_name=stud_sheet)
+    skol_df = pd.read_excel(excel_skol, sheet_name=skol_sheet)
 
     stud_df.columns = stud_df.columns.str.strip()
     skol_df.columns = skol_df.columns.str.strip()
 
     # ==============================
-    # HITTA KOLUMNER
-    # ==============================
-    fnamn = hitta_kolumn(stud_df, ["förnamn"])
-    enamn = hitta_kolumn(stud_df, ["efternamn"])
-    ort = hitta_kolumn(stud_df, ["bostadsort"])
-    alt = hitta_kolumn(stud_df, ["alternativ"])
-    val = hitta_kolumn(stud_df, ["helst utgå"])
-
-    skola = hitta_kolumn(skol_df, ["skolenhet"])
-    kull = hitta_kolumn(skol_df, ["kull"])
-    inriktning = hitta_kolumn(skol_df, ["inriktning"])
-    platser = hitta_kolumn(skol_df, ["platser"])
-
-    # ==============================
-    # VALIDERA
-    # ==============================
-    if not all([fnamn, enamn, ort, skola, kull, inriktning, platser]):
-        st.error("⚠️ Kunde inte tolka alla kolumner")
-        st.write("Studentkolumner:", stud_df.columns.tolist())
-        st.write("Skolkolumner:", skol_df.columns.tolist())
-        st.stop()
-
-    # ==============================
     # SKAPA STUDENTDATA
     # ==============================
-    stud_df["Student"] = stud_df[fnamn].astype(str).str.strip() + " " + stud_df[enamn].astype(str).str.strip()
-    stud_df["Ort"] = stud_df[ort]
+    stud_df["Student"] = stud_df["Förnamn"].astype(str).str.strip() + " " + stud_df["Efternamn"].astype(str).str.strip()
 
-    if alt:
-        stud_df["AltOrt"] = stud_df[alt]
-    else:
-        stud_df["AltOrt"] = ""
-
-    if val:
-        stud_df["Val"] = stud_df[val]
-    else:
-        stud_df["Val"] = ""
+    stud_df = stud_df.rename(columns={
+        "Bostadsort": "Ort",
+        "Eventuell alternativ bostadsort som du har möjlighet att utgå från under läsåren 26/27 och 27/28": "AltOrt",
+        "Jag vill helst utgå från": "Val"
+    })
 
     # ==============================
     # AKTIV ORT
@@ -97,8 +89,8 @@ if stud_file and skol_file:
     # ==============================
     # VAL
     # ==============================
-    vald_inriktning = st.selectbox("Inriktning", sorted(skol_df[inriktning].dropna().unique()))
-    vald_kull = st.selectbox("Kull", sorted(skol_df[kull].dropna().unique()))
+    vald_inriktning = st.selectbox("Inriktning", sorted(skol_df["Inriktning"].dropna().unique()))
+    vald_kull = st.selectbox("Kull", sorted(skol_df["Kull"].dropna().unique()))
 
     region_typ = st.selectbox(
         "Regionmodell (LAFOV/LAGRV)",
@@ -109,15 +101,14 @@ if stud_file and skol_file:
     # FILTRERA SKOLOR
     # ==============================
     skolor_df = skol_df[
-        (skol_df[inriktning] == vald_inriktning) &
-        (skol_df[kull] == vald_kull)
+        (skol_df["Inriktning"] == vald_inriktning) &
+        (skol_df["Kull"] == vald_kull)
     ]
 
-    # kapacitet
     kapacitet = {
-        row[skola]: int(row[platser])
+        row["Skolenhet"]: int(row["Antal platser"])
         for _, row in skolor_df.iterrows()
-        if pd.notna(row[platser])
+        if pd.notna(row["Antal platser"])
     }
 
     skolor = list(kapacitet.keys())
@@ -187,7 +178,7 @@ if stud_file and skol_file:
     schema_df = pd.DataFrame(schema, columns=cols)
 
     # ==============================
-    # VISA
+    # VISA RESULTAT
     # ==============================
     st.subheader("Placering")
     st.dataframe(schema_df)
@@ -220,7 +211,7 @@ if stud_file and skol_file:
             ok_status[student] = st.checkbox("OK", key=f"ok_{i}")
 
     # ==============================
-    # EXCEL
+    # EXCEL EXPORT
     # ==============================
     def skapa_excel():
 
@@ -230,8 +221,8 @@ if stud_file and skol_file:
         ws1.title = "Placeringar"
         ws1.append(cols)
 
-        for c in ws1[1]:
-            c.font = Font(bold=True)
+        for cell in ws1[1]:
+            cell.font = Font(bold=True)
 
         for _, r in schema_df.iterrows():
             ws1.append(list(r))
