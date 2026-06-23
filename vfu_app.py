@@ -1,59 +1,67 @@
 
 import streamlit as st
 import pandas as pd
-from collections import defaultdict
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from io import BytesIO
 
 st.set_page_config(layout="wide")
-st.title("VFU-placering")
+st.title("VFU-placering (komplett)")
 
 # ==============================
-# FILUPPLADDNING
+# Ladda upp filer
 # ==============================
-stud_file = st.file_uploader("Studentfil", type=["xlsx"])
-skol_file = st.file_uploader("Översiktsfil", type=["xlsx"])
+file1 = st.file_uploader("Fil 1", type=["xlsx"])
+file2 = st.file_uploader("Fil 2", type=["xlsx"])
 
-if stud_file and skol_file:
+if file1 and file2:
 
     # ==============================
-    # AUTO-HITTA RÄTT BLAD
+    # Identifiera filtyper
     # ==============================
-    def hitta_data_blad(excel_file, typ="student"):
+    def innehåller_studentdata(excel):
+        for sheet in excel.sheet_names:
+            df = pd.read_excel(excel, sheet_name=sheet, nrows=5)
+            cols = " ".join(df.columns.str.lower())
+            if "förnamn" in cols and "efternamn" in cols:
+                return True
+        return False
 
-        for sheet in excel_file.sheet_names:
+    excel1 = pd.ExcelFile(file1)
+    excel2 = pd.ExcelFile(file2)
 
-            df_test = pd.read_excel(excel_file, sheet_name=sheet, nrows=5)
-            cols = [str(c).lower() for c in df_test.columns]
+    if innehåller_studentdata(excel1):
+        excel_stud, excel_skol = excel1, excel2
+    else:
+        excel_stud, excel_skol = excel2, excel1
 
-            if typ == "student":
-                if any("förnamn" in c for c in cols) and any("efternamn" in c for c in cols):
-                    return sheet
+    # ==============================
+    # Hitta rätt blad
+    # ==============================
+    def hitta_blad(excel, typ):
 
-            if typ == "skola":
-                if any("skolenhet" in c for c in cols) and any("platser" in c for c in cols):
-                    return sheet
+        # prioritera DATA-blad
+        for s in excel.sheet_names:
+            if s.lower() == "data":
+                return s
+
+        for s in excel.sheet_names:
+            df = pd.read_excel(excel, sheet_name=s, nrows=5)
+            cols = " ".join(df.columns.str.lower())
+
+            if typ == "student" and "förnamn" in cols:
+                return s
+
+            if typ == "skola" and "skolenhet" in cols:
+                return s
 
         return None
 
-    # ==============================
-    # LÄS FILER
-    # ==============================
-    excel_stud = pd.ExcelFile(stud_file)
-    excel_skol = pd.ExcelFile(skol_file)
+    stud_sheet = hitta_blad(excel_stud, "student")
+    skol_sheet = hitta_blad(excel_skol, "skola")
 
-    stud_sheet = hitta_data_blad(excel_stud, "student")
-    skol_sheet = hitta_data_blad(excel_skol, "skola")
-
-    if not stud_sheet:
-        st.error("❌ Hittar inget datablad i studentfilen")
-        st.write("Tillgängliga blad:", excel_stud.sheet_names)
-        st.stop()
-
-    if not skol_sheet:
-        st.error("❌ Hittar inget skolblad i översiktsfilen")
-        st.write("Tillgängliga blad:", excel_skol.sheet_names)
+    if not stud_sheet or not skol_sheet:
+        st.error("❌ Kunde inte identifiera rätt blad")
         st.stop()
 
     st.success(f"Studentblad: {stud_sheet}")
@@ -66,9 +74,13 @@ if stud_file and skol_file:
     skol_df.columns = skol_df.columns.str.strip()
 
     # ==============================
-    # SKAPA STUDENTDATA
+    # Studentdata
     # ==============================
-    stud_df["Student"] = stud_df["Förnamn"].astype(str).str.strip() + " " + stud_df["Efternamn"].astype(str).str.strip()
+    stud_df["Student"] = (
+        stud_df["Förnamn"].astype(str).str.strip() +
+        " " +
+        stud_df["Efternamn"].astype(str).str.strip()
+    )
 
     stud_df = stud_df.rename(columns={
         "Bostadsort": "Ort",
@@ -76,9 +88,6 @@ if stud_file and skol_file:
         "Jag vill helst utgå från": "Val"
     })
 
-    # ==============================
-    # AKTIV ORT
-    # ==============================
     def välj_ort(row):
         if "alternativ" in str(row["Val"]).lower():
             return row["AltOrt"]
@@ -87,19 +96,16 @@ if stud_file and skol_file:
     stud_df["AktivOrt"] = stud_df.apply(välj_ort, axis=1)
 
     # ==============================
-    # VAL
+    # Val
     # ==============================
     vald_inriktning = st.selectbox("Inriktning", sorted(skol_df["Inriktning"].dropna().unique()))
     vald_kull = st.selectbox("Kull", sorted(skol_df["Kull"].dropna().unique()))
 
     region_typ = st.selectbox(
-        "Regionmodell (LAFOV/LAGRV)",
+        "Region (LAFOV/LAGRV)",
         ["Kalmar (ABBC)", "Karlskrona/Oskarshamn (ABAB)"]
     )
 
-    # ==============================
-    # FILTRERA SKOLOR
-    # ==============================
     skolor_df = skol_df[
         (skol_df["Inriktning"] == vald_inriktning) &
         (skol_df["Kull"] == vald_kull)
@@ -115,103 +121,83 @@ if stud_file and skol_file:
     studenter = stud_df["Student"].tolist()
 
     # ==============================
-    # TILLDELNING
+    # Tilldelning
     # ==============================
-    def tilldela(studenter, skolor, kapacitet, antal):
-
+    def tilldela(n, skolor, kap):
+        res = {}
         idx = 0
-        kvar = kapacitet.copy()
-        resultat = {}
 
-        for student in studenter:
+        for student in n:
             val = []
+            kvar = kap.copy()
 
-            while len(val) < antal:
+            for _ in range(10):  # säkerhetsloop
+
                 s = skolor[idx % len(skolor)]
 
                 if kvar[s] > 0:
                     val.append(s)
                     kvar[s] -= 1
 
+                if len(val) == target:
+                    break
+
                 idx += 1
 
-            resultat[student] = val
+            res[student] = val
 
-        return resultat
+        return res
 
     # ==============================
-    # SCHEMA
+    # Schema
     # ==============================
     if vald_inriktning == "LGFRI":
+        target = 2
+        data = tilldela(studenter, skolor, kapacitet)
 
-        student_skolor = tilldela(studenter, skolor, kapacitet, 2)
-
-        schema = [
-            [s, A, A, B]
-            for s, (A, B) in student_skolor.items()
-        ]
-
+        schema = [[s, A, A, B] for s, (A, B) in data.items()]
         cols = ["Student", "År1", "År2", "År3"]
 
     else:
-
         if "Kalmar" in region_typ:
-
-            student_skolor = tilldela(studenter, skolor, kapacitet, 3)
-
-            schema = [
-                [s, A, B, B, C]
-                for s, (A, B, C) in student_skolor.items()
-            ]
-
+            target = 3
+            data = tilldela(studenter, skolor, kapacitet)
+            schema = [[s, A, B, B, C] for s, (A, B, C) in data.items()]
         else:
-
-            student_skolor = tilldela(studenter, skolor, kapacitet, 2)
-
-            schema = [
-                [s, A, B, A, B]
-                for s, (A, B) in student_skolor.items()
-            ]
+            target = 2
+            data = tilldela(studenter, skolor, kapacitet)
+            schema = [[s, A, B, A, B] for s, (A, B) in data.items()]
 
         cols = ["Student", "År1", "År2", "År3", "År4"]
 
     schema_df = pd.DataFrame(schema, columns=cols)
 
-    # ==============================
-    # VISA RESULTAT
-    # ==============================
     st.subheader("Placering")
     st.dataframe(schema_df)
 
     # ==============================
-    # PENDLINGSKONTROLL
+    # Pendlingskontroll
     # ==============================
     st.subheader("Pendlingskontroll")
 
-    ort_val = {}
-    ok_status = {}
+    ort_val, ok_status = {}, {}
 
     for i, row in stud_df.iterrows():
+        c1, c2, c3 = st.columns([3,3,1])
 
-        col1, col2, col3 = st.columns([3,3,1])
+        s = row["Student"]
 
-        student = row["Student"]
+        with c1:
+            st.write(f"{s} ({row['AktivOrt']})")
 
-        with col1:
-            st.write(f"{student} ({row['AktivOrt']})")
+        with c2:
+            ort_val[s] = st.selectbox("Vald ort", skolor, key=f"ort_{i}")
 
-        with col2:
-            ort_val[student] = st.selectbox(
-                "Vald ort",
-                sorted(kapacitet.keys()),
-                key=f"ort_{i}"
-            )
-
-        with col3:
-            ok_status[student] = st.checkbox("OK", key=f"ok_{i}")
+        with c3:
+            ok_status[s] = st.checkbox("OK", key=f"ok_{i}")
 
     # ==============================
-    # EXCEL EXPORT
+    # Excel
     # ==============================
     def skapa_excel():
 
@@ -221,14 +207,13 @@ if stud_file and skol_file:
         ws1.title = "Placeringar"
         ws1.append(cols)
 
-        for cell in ws1[1]:
-            cell.font = Font(bold=True)
+        for c in ws1c.font = Font(bold=True)
 
         for _, r in schema_df.iterrows():
             ws1.append(list(r))
 
         ws2 = wb.create_sheet("Rapport")
-        ws2.append(["Student", "Aktiv ort", "Vald ort", "OK"])
+        ws2.append(["Student", "AktivOrt", "Vald ort", "OK"])
 
         for _, r in stud_df.iterrows():
             s = r["Student"]
@@ -244,19 +229,11 @@ if stud_file and skol_file:
         ws3.append(["Student", "Status"])
 
         for s in studenter:
-            ws3.append([
-                s,
-                "Klar" if ok_status.get(s) else "Ej klar"
-            ])
+            ws3.append([s, "Klar" if ok_status.get(s) else "Ej klar"])
 
-        buffer = BytesIO()
-        wb.save(buffer)
-        buffer.seek(0)
+        out = BytesIO()
+        wb.save(out)
+        out.seek(0)
+        return out
 
-        return buffer
-
-    st.download_button(
-        "Ladda ner Excel",
-        data=skapa_excel(),
-        file_name="VFU_resultat.xlsx"
-    )
+    st.download_button("Ladda ner Excel", data=skapa_excel(), file_name="VFU_resultat.xlsx")
