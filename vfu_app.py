@@ -1,189 +1,209 @@
 
+import streamlit as st
 import pandas as pd
 from collections import defaultdict
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Font
+from io import BytesIO
+
+st.set_page_config(layout="wide")
+st.title("VFU-placering (full modell)")
 
 # ==============================
-# FILER
+# FILUPPLADDNING
 # ==============================
-STUDENT_FIL = "kull_resultat (35).xlsx"
-OVERSIKT_FIL = "Helhetsbild övningsskolor.xlsx"
-OUTPUT_FIL = "VFU_RESULTAT_KLAR.xlsx"
+stud_file = st.file_uploader("Studentfil", type=["xlsx"])
+skol_file = st.file_uploader("Översiktsfil", type=["xlsx"])
 
-# ==============================
-# LÄS IN DATA
-# ==============================
-stud_df = pd.read_excel(STUDENT_FIL, sheet_name="Studenter", engine="openpyxl")
-skol_df = pd.read_excel(OVERSIKT_FIL, sheet_name="SKOLOR", engine="openpyxl")
+if stud_file and skol_file:
 
-stud_df.columns = stud_df.columns.str.strip()
-skol_df.columns = skol_df.columns.str.strip()
+    stud_df = pd.read_excel(stud_file, sheet_name="Studenter", engine="openpyxl")
+    skol_df = pd.read_excel(skol_file, sheet_name="SKOLOR", engine="openpyxl")
 
-# ==============================
-# FILTRERA – LAFOV 26
-# ==============================
-lafov_df = skol_df[
-    (skol_df["Kull"] == 26) &
-    (skol_df["Inriktning"] == "LAFOV")
-]
+    stud_df.columns = stud_df.columns.str.strip()
+    skol_df.columns = skol_df.columns.str.strip()
 
-# ==============================
-# BYGG KAPACITET
-# ==============================
-kapacitet = {}
+    # ==============================
+    # VAL
+    # ==============================
+    inriktningar = sorted(skol_df["Inriktning"].dropna().unique())
+    vald_inriktning = st.selectbox("Inriktning", inriktningar)
 
-for _, row in lafov_df.iterrows():
-    skola = row["Skolenhet"]
-    platser = row["Antal platser"]
+    kullar = sorted(skol_df["Kull"].dropna().unique())
+    vald_kull = st.selectbox("Kull", kullar)
 
-    if pd.notna(skola) and pd.notna(platser):
-        kapacitet[skola] = int(platser)
+    filtrerad_df = skol_df[
+        (skol_df["Kull"] == vald_kull) &
+        (skol_df["Inriktning"] == vald_inriktning)
+    ]
 
-# ==============================
-# INITIERA PLACERING
-# ==============================
-placering = defaultdict(list)
+    if filtrerad_df.empty:
+        st.warning("Inga skolor")
+        st.stop()
 
-# sortera skolor (störst först = bättre balans)
-skolor_sorterade = sorted(kapacitet, key=lambda x: kapacitet[x], reverse=True)
+    # ==============================
+    # KAPACITET
+    # ==============================
+    kapacitet = {}
+    for _, row in filtrerad_df.iterrows():
+        if pd.notna(row["Skolenhet"]) and pd.notna(row["Antal platser"]):
+            kapacitet[row["Skolenhet"]] = int(row["Antal platser"])
 
-# ==============================
-# FÖRDELNINGSALGORITM
-# ==============================
-for _, row in stud_df.iterrows():
+    skolor = list(kapacitet.keys())
+    studenter = stud_df["Student"].tolist()
 
-    student = row["Student"]
+    # ==============================
+    # REGIONVAL
+    # ==============================
+    region_typ = st.selectbox(
+        "Regionmodell (gäller LAFOV/LAGRV)",
+        ["Kalmar (ABBC)", "Karlskrona/Oskarshamn (ABAB)"]
+    )
 
-    placerad = False
+    # ==============================
+    # TILLDELNING AV SKOLOR
+    # ==============================
+    def tilldela(studenter, skolor, kapacitet, antal):
 
-    # 1. Försök placera i ordning (balanserat)
-    for skola in skolor_sorterade:
-        if len(placering[skola]) < kapacitet[skola]:
-            placering[skola].append(student)
-            placerad = True
-            break
+        skolor_lista = list(skolor)
+        idx = 0
+        result = {}
 
-    # 2. Om inget funkar (edge case)
-    if not placerad:
-        minst = min(placering, key=lambda x: len(placering[x]))
-        placering[minst].append(student)
+        kvar = kapacitet.copy()
 
-# ==============================
-# SKAPA EXCEL
-# ==============================
-wb = Workbook()
+        for student in studenter:
 
-# ==============================
-# 1. PLACERINGAR (MANUELL LAYOUT)
-# ==============================
-ws1 = wb.active
-ws1.title = "Placeringar"
+            val = []
 
-headers = ["Skola", "Studenter"]
-ws1.append(headers)
+            while len(val) < antal:
+                skola = skolor_lista[idx % len(skolor_lista)]
 
-for cell in ws1[1]:
-    cell.font = Font(bold=True)
+                if kvar[skola] > 0:
+                    val.append(skola)
+                    kvar[skola] -= 1
 
-row_idx = 2
+                idx += 1
 
-for skola in skolor_sorterade:
+            result[student] = val
 
-    studenter = placering[skola]
+        return result
 
-    if len(studenter) == 0:
-        ws1.append([skola, ""])
-        continue
+    # ==============================
+    # SCHEMA
+    # ==============================
+    if vald_inriktning == "LGFRI":
 
-    for i, s in enumerate(studenter):
-        if i == 0:
-            ws1.append([f"{skola} (max {kapacitet[skola]})", s])
-        else:
-            ws1.append(["", s])
+        student_skolor = tilldela(studenter, skolor, kapacitet, 2)
 
-# ==============================
-# 2. RAPPORT (MED OK-FUNKTION)
-# ==============================
-ws2 = wb.create_sheet("Rapport")
+        schema = []
+        for student, (A, B) in student_skolor.items():
+            schema.append([student, A, A, B])
 
-headers = ["Student", "Hemort", "Vald ort", "OK"]
-ws2.append(headers)
+        columns = ["Student", "År1", "År2", "År3"]
 
-for cell in ws2[1]:
-    cell.font = Font(bold=True)
-
-for _, row in stud_df.iterrows():
-
-    ws2.append([
-        row["Student"],
-        row["Ort"],
-        "",   # väljs manuellt
-        ""    # skriv OK här
-    ])
-
-# ==============================
-# 3. KONTROLL
-# ==============================
-ws3 = wb.create_sheet("Kontroll")
-
-headers = ["Student", "Status", "Kommentar"]
-ws3.append(headers)
-
-for cell in ws3[1]:
-    cell.font = Font(bold=True)
-
-for _, row in stud_df.iterrows():
-
-    ws3.append([
-        row["Student"],
-        "Väntar på OK",
-        ""
-    ])
-
-# ==============================
-# FÄRGER (VISUELLT STÖD)
-# ==============================
-green_fill = PatternFill(start_color="C6EFCE", fill_type="solid")
-yellow_fill = PatternFill(start_color="FFF3CD", fill_type="solid")
-
-# ==============================
-# KOPPLA RAPPORT → KONTROLL
-# ==============================
-for i in range(2, ws2.max_row + 1):
-
-    ok_value = ws2.cell(row=i, column=4).value
-    student = ws2.cell(row=i, column=1).value
-
-    kontroll_rad = i
-
-    if ok_value == "OK":
-        ws3.cell(row=kontroll_rad, column=2, value="Klar")
-        ws3.cell(row=kontroll_rad, column=2).fill = green_fill
     else:
-        ws3.cell(row=kontroll_rad, column=2, value="Ej klar")
-        ws3.cell(row=kontroll_rad, column=2).fill = yellow_fill
 
-# ==============================
-# AUTO-BREDD
-# ==============================
-for ws in [ws1, ws2, ws3]:
-    for col in ws.columns:
-        max_length = 0
-        col_letter = col[0].column_letter
+        if "Kalmar" in region_typ:
+            student_skolor = tilldela(studenter, skolor, kapacitet, 3)
 
-        for cell in col:
-            try:
-                if cell.value:
-                    max_length = max(max_length, len(str(cell.value)))
-            except:
-                pass
+            schema = []
+            for student, (A, B, C) in student_skolor.items():
+                schema.append([student, A, B, B, C])
 
-        ws.column_dimensions[col_letter].width = max_length + 2
+        else:
+            student_skolor = tilldela(studenter, skolor, kapacitet, 2)
 
-# ==============================
-# SPARA FIL
-# ==============================
-wb.save(OUTPUT_FIL)
+            schema = []
+            for student, (A, B) in student_skolor.items():
+                schema.append([student, A, B, A, B])
 
-print("✅ KLAR – full version skapad:", OUTPUT_FIL)
+        columns = ["Student", "År1", "År2", "År3", "År4"]
+
+    schema_df = pd.DataFrame(schema, columns=columns)
+
+    # ==============================
+    # VISA
+    # ==============================
+    st.subheader("Schema")
+    st.dataframe(schema_df)
+
+    # ==============================
+    # PENDLINGSKONTROLL
+    # ==============================
+    st.subheader("Pendlingskontroll")
+
+    ort_val = {}
+    ok_status = {}
+
+    orter = sorted(stud_df["Ort"].dropna().unique())
+
+    for i, row in stud_df.iterrows():
+
+        col1, col2, col3 = st.columns([3,3,1])
+
+        student = row["Student"]
+
+        with col1:
+            st.write(f"{student} ({row['Ort']})")
+
+        with col2:
+            ort_val[student] = st.selectbox("Vald ort", orter, key=f"ort_{i}")
+
+        with col3:
+            ok_status[student] = st.checkbox("OK", key=f"ok_{i}")
+
+    # ==============================
+    # EXCEL
+    # ==============================
+    def skapa_excel():
+
+        wb = Workbook()
+
+        # ---- schema ----
+        ws1 = wb.active
+        ws1.title = "Placeringar"
+
+        ws1.append(list(schema_df.columns))
+        for cell in ws1[1]:
+            cell.font = Font(bold=True)
+
+        for _, row in schema_df.iterrows():
+            ws1.append(list(row))
+
+        # ---- rapport ----
+        ws2 = wb.create_sheet("Rapport")
+        ws2.append(["Student", "Hemort", "Vald ort", "OK"])
+
+        for _, row in stud_df.iterrows():
+            student = row["Student"]
+
+            ws2.append([
+                student,
+                row["Ort"],
+                ort_val.get(student, ""),
+                "OK" if ok_status.get(student) else ""
+            ])
+
+        # ---- kontroll ----
+        ws3 = wb.create_sheet("Kontroll")
+        ws3.append(["Student", "Status"])
+
+        for _, row in stud_df.iterrows():
+            student = row["Student"]
+
+            status = "Klar" if ok_status.get(student) else "Ej klar"
+            ws3.append([student, status])
+
+        out = BytesIO()
+        wb.save(out)
+        out.seek(0)
+        return out
+
+    excel_data = skapa_excel()
+
+    st.download_button(
+        "Ladda ner Excel",
+        data=excel_data,
+        file_name=f"VFU_{vald_inriktning}_{vald_kull}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
