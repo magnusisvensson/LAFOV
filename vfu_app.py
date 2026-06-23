@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 from collections import defaultdict, deque
 from openpyxl import Workbook
-from openpyxl.styles import PatternFill, Border, Side, Alignment
+from openpyxl.styles import PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 from io import BytesIO
 
@@ -27,8 +27,11 @@ if "step" not in st.session_state:
 if "student_regions" not in st.session_state:
     st.session_state.student_regions = {}
 
-if "rejected" not in st.session_state:
-    st.session_state.rejected = {}
+if "manual_assignments" not in st.session_state:
+    st.session_state.manual_assignments = {}
+
+if "excel_data" not in st.session_state:
+    st.session_state.excel_data = None
 
 
 # =========================
@@ -36,7 +39,6 @@ if "rejected" not in st.session_state:
 # =========================
 def get_region(text):
     t = str(text).lower()
-
     if "oskarshamn" in t:
         return "Oskarshamn"
     if any(x in t for x in ["karlskrona","ronneby","rödeby"]):
@@ -86,7 +88,7 @@ if system_file and form_file:
 
 
     # =========================
-    # STEG 1
+    # STEG 1 – REGION
     # =========================
     if st.session_state.step == 1:
 
@@ -121,7 +123,7 @@ if system_file and form_file:
 
 
     # =========================
-    # STEG 2
+    # STEG 2 – PLACERING
     # =========================
     if st.session_state.step == 2:
 
@@ -136,21 +138,6 @@ if system_file and form_file:
             for r in ["Kalmar","Karlskrona","Oskarshamn"]
         }
 
-        # ✅ ROBUST PICK
-        def pick(student,year,options,fallback):
-
-            reject=st.session_state.rejected.get((student,year),set())
-
-            valid=[sk for sk in options if sk not in reject]
-
-            if valid:
-                return valid[0]
-
-            if options:
-                return options[0]
-
-            return fallback
-
         for _,s in students.iterrows():
 
             student=s["Student"]
@@ -161,21 +148,9 @@ if system_file and form_file:
 
             skolor_r=list(queue)
 
-            A = pick(student,"År1",skolor_r,skolor_r[0])
-
-            B = pick(
-                student,
-                "År2",
-                [x for x in skolor_r if x!=A],
-                skolor_r[1] if len(skolor_r)>1 else skolor_r[0]
-            )
-
-            C = pick(
-                student,
-                "År4",
-                [x for x in skolor_r if x not in [A,B]],
-                skolor_r[2] if len(skolor_r)>2 else skolor_r[0]
-            )
+            A=skolor_r[0]
+            B=skolor_r[1] if len(skolor_r)>1 else A
+            C=skolor_r[2] if len(skolor_r)>2 else B
 
             if program=="LGFRI":
                 y1,y2,y3,y4=A,A,B,""
@@ -184,11 +159,6 @@ if system_file and form_file:
                     y1,y2,y3,y4=A,B,B,C
                 else:
                     y1,y2,y3,y4=A,B,A,B
-
-            usage[y1]["År1"]+=1
-            usage[y2]["År2"]+=1
-            usage[y3]["År3"]+=1
-            if y4: usage[y4]["År4"]+=1
 
             results.append({
                 "Student":student,
@@ -204,116 +174,125 @@ if system_file and form_file:
 
 
         # =========================
-        # PENDLING
+        # 🆕 MANUELL EDITOR
         # =========================
-        st.header("🚶 Pendling")
+        st.header("📝 Justera placering manuellt")
 
-        name=st.selectbox("Student",df["Student"])
+        student_name = st.selectbox("Välj student", df["Student"])
 
-        r=df[df["Student"]==name].iloc[0]
+        row = df[df["Student"]==student_name].iloc[0]
+        region=row["Region"]
 
-        for year in ["År1","År2","År3","År4"]:
+        skolor_r = skolor[skolor["Region"]==region]["Skolenhet"].tolist()
 
-            sk=r[year]
+        if student_name not in st.session_state.manual_assignments:
+            st.session_state.manual_assignments[student_name] = {
+                "År1":row["År1"],
+                "År2":row["År2"],
+                "År3":row["År3"],
+                "År4":row["År4"],
+            }
 
-            if sk:
+        current=st.session_state.manual_assignments[student_name]
 
-                st.write(f"{year}: {sk}")
+        col1,col2,col3,col4=st.columns(4)
 
-                val=st.radio("OK?",["Ja","Nej"],key=f"{name}_{year}")
+        current["År1"]=col1.selectbox("År1",skolor_r,index=skolor_r.index(current["År1"]))
+        current["År2"]=col2.selectbox("År2",skolor_r,index=skolor_r.index(current["År2"]))
+        current["År3"]=col3.selectbox("År3",skolor_r,index=skolor_r.index(current["År3"]))
 
-                if val=="Nej":
+        if current["År4"]:
+            current["År4"]=col4.selectbox("År4",skolor_r,index=skolor_r.index(current["År4"]))
+        else:
+            current["År4"]=col4.selectbox("År4",[""]+skolor_r)
 
-                    key=(name,year)
-
-                    if key not in st.session_state.rejected:
-                        st.session_state.rejected[key]=set()
-
-                    st.session_state.rejected[key].add(sk)
-
-                    st.rerun()
+        if st.button("✅ Spara ändring"):
+            st.session_state.manual_assignments[student_name]=current
+            st.success("Sparat")
 
 
         # =========================
-        # EXCEL (SNYGG VERSION)
+        # ✅ BYGG DATA FÖR EXPORT
         # =========================
-        output=BytesIO()
-        wb=Workbook()
-        ws=wb.active
-        ws.title="Placeringar"
+        export_df = pd.DataFrame([
+            {"Student":s, **yrs}
+            for s,yrs in st.session_state.manual_assignments.items()
+        ])
 
-        thin=Side(style="thin")
-        border=Border(top=thin,left=thin,right=thin,bottom=thin)
 
-        fill_region=PatternFill("solid","D9EAF7")
+        # =========================
+        # EXCEL
+        # =========================
+        def build_excel(df):
 
-        row_i=1
+            output=BytesIO()
+            wb=Workbook()
+            ws=wb.active
 
-        for region in ["Kalmar","Oskarshamn","Karlskrona"]:
+            thin=Side(style="thin")
+            border=Border(top=thin,left=thin,right=thin,bottom=thin)
+            fill=PatternFill("solid","D9EAF7")
 
-            ws.cell(row_i,1,region)
-            ws.merge_cells(start_row=row_i,start_column=1,end_row=row_i,end_column=5)
+            row_i=1
 
-            for c in range(1,6):
-                ws.cell(row_i,c).fill=fill_region
+            for region in ["Kalmar","Oskarshamn","Karlskrona"]:
 
-            row_i+=1
+                ws.cell(row_i,1,region)
+                ws.merge_cells(start_row=row_i,start_column=1,end_row=row_i,end_column=5)
 
-            for skola in skolor[skolor["Region"]==region]["Skolenhet"]:
+                for c in range(1,6):
+                    ws.cell(row_i,c).fill=fill
 
-                start=row_i
-
-                ws.cell(row_i,1,f"{skola} (max {kap[skola]})")
                 row_i+=1
 
-                ws.append(["","År1","År2","År3","År4"])
-                row_i+=1
+                for skola in skolor[skolor["Region"]==region]["Skolenhet"]:
 
-                subset=df[
-                    (df["År1"]==skola)|
-                    (df["År2"]==skola)|
-                    (df["År3"]==skola)|
-                    (df["År4"]==skola)
-                ]
+                    start=row_i
 
-                for _,rr in subset.iterrows():
-                    ws.append([
-                        "",
-                        rr["Student"] if rr["År1"]==skola else "",
-                        rr["Student"] if rr["År2"]==skola else "",
-                        rr["Student"] if rr["År3"]==skola else "",
-                        rr["Student"] if rr["År4"]==skola else "",
-                    ])
+                    ws.cell(row_i,1,f"{skola} (max {kap[skola]})")
                     row_i+=1
 
-                end=row_i-1
+                    ws.append(["","År1","År2","År3","År4"])
+                    row_i+=1
 
-                for r_i in range(start,end+1):
-                    for c_i in range(1,6):
-                        ws.cell(r_i,c_i).border=border
+                    subset=df[
+                        (df["År1"]==skola)|
+                        (df["År2"]==skola)|
+                        (df["År3"]==skola)|
+                        (df["År4"]==skola)
+                    ]
 
-        # ✅ AUTOBREDD
-        for col in ws.columns:
-            max_length=0
-            col_letter=get_column_letter(col[0].column)
+                    for _,r in subset.iterrows():
+                        ws.append([
+                            "",
+                            r["Student"] if r["År1"]==skola else "",
+                            r["Student"] if r["År2"]==skola else "",
+                            r["Student"] if r["År3"]==skola else "",
+                            r["Student"] if r["År4"]==skola else "",
+                        ])
+                        row_i+=1
 
-            for cell in col:
-                try:
-                    if cell.value:
-                        max_length=max(max_length,len(str(cell.value)))
-                except:
-                    pass
+                    end=row_i-1
 
-            ws.column_dimensions[col_letter].width=max_length+3
+                    for rr in range(start,end+1):
+                        for cc in range(1,6):
+                            ws.cell(rr,cc).border=border
+
+            for col in ws.columns:
+                length=max(len(str(cell.value)) if cell.value else 0 for cell in col)
+                ws.column_dimensions[get_column_letter(col[0].column)].width=length+3
+
+            wb.save(output)
+            output.seek(0)
+            return output
+
+        st.session_state.excel_data = build_excel(export_df)
 
 
-        wb.save(output)
-        output.seek(0)
-
-        st.download_button(
-            "⬇️ Ladda ner Excel",
-            data=output,
-            file_name="kull_resultat.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
+        if st.session_state.excel_data:
+            st.download_button(
+                "⬇️ Ladda ner Excel",
+                data=st.session_state.excel_data,
+                file_name="kull_resultat.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
