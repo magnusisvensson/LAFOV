@@ -1,9 +1,8 @@
 
-import streamlit as st
-import pandas as pd
-from collections import defaultdict, deque
+import streamlit as stimport stream as pd
+from collections import defaultdict
 from openpyxl import Workbook
-from openpyxl.styles import PatternFill, Border, Side
+from openpyxl.styles import PatternFill, Border, Side, Alignment
 from openpyxl.utils import get_column_letter
 from io import BytesIO
 
@@ -88,13 +87,13 @@ if system_file and form_file:
 
 
     # =========================
-    # STEG 1
+    # STEG 1 – REGION
     # =========================
     if st.session_state.step == 1:
 
         st.header("1. Region")
 
-        temp={}
+        temp = {}
 
         for _,row in students.iterrows():
 
@@ -117,13 +116,13 @@ if system_file and form_file:
             temp[name]=region
 
         if st.button("✅ Bekräfta"):
-            st.session_state.student_regions=temp
-            st.session_state.step=2
+            st.session_state.student_regions = temp
+            st.session_state.step = 2
             st.rerun()
 
 
     # =========================
-    # STEG 2
+    # STEG 2 – PLACERING
     # =========================
     if st.session_state.step == 2:
 
@@ -131,12 +130,9 @@ if system_file and form_file:
             "År1":0,"År2":0,"År3":0,"År4":0
         })
 
-        # ✅ KAPACITETSSTYRD FUNKTION
         def best_school(skolor_list, year):
-
             def load(sk):
                 return usage[sk][year] / kap.get(sk,1)
-
             return min(skolor_list, key=load)
 
         results=[]
@@ -148,10 +144,6 @@ if system_file and form_file:
 
             skolor_r = skolor[skolor["Region"]==region]["Skolenhet"].tolist()
 
-            if not skolor_r:
-                continue
-
-            # ✅ KAPACITETSVAL
             A = best_school(skolor_r, "År1")
 
             rest1 = [sk for sk in skolor_r if sk != A]
@@ -168,7 +160,6 @@ if system_file and form_file:
                 else:
                     y1,y2,y3,y4=A,B,A,B
 
-            # ✅ UPDATE usage (VIKTIGT)
             usage[A]["År1"] += 1
             usage[B]["År2"] += 1
             usage[B]["År3"] += 1
@@ -189,7 +180,7 @@ if system_file and form_file:
 
 
         # =========================
-        # MANUELL EDITOR (OFÖRÄNDRAD)
+        # MANUELL EDITOR
         # =========================
         st.header("📝 Justera placering manuellt")
 
@@ -227,7 +218,7 @@ if system_file and form_file:
 
 
         # =========================
-        # SLÅ IHOP (OFÖRÄNDRAT)
+        # SLÅ IHOP AUTO + MANUELLT
         # =========================
         export_rows=[]
 
@@ -254,143 +245,120 @@ if system_file and form_file:
 
 
         # =========================
-        # EXCEL (OFÖRÄNDRAD)
+        # EXCEL – NY DESIGN
         # =========================
         def build_excel(df):
 
-    output = BytesIO()
-    wb = Workbook()
+            output = BytesIO()
+            wb = Workbook()
 
-    thin = Side(style="thin")
-    medium = Side(style="medium")
+            thin = Side(style="thin")
+            medium = Side(style="medium")
 
-    box = Border(top=medium, left=medium, right=medium, bottom=medium)
-    inner = Border(left=thin, right=thin)
+            fill_region = PatternFill("solid","BDD7EE")
+            fill_header = PatternFill("solid","E7F3FF")
 
-    fill_region = PatternFill("solid","BDD7EE")
-    fill_header = PatternFill("solid","E7F3FF")
+            ws = wb.active
+            ws.title = "Placeringar"
 
-    # -------- BLAD 1 --------
-    ws = wb.active
-    ws.title = "Placeringar"
+            row_i = 1
 
-    row_i = 1
+            for region in ["Kalmar","Oskarshamn","Karlskrona"]:
 
-    for region in ["Kalmar","Oskarshamn","Karlskrona"]:
+                ws.cell(row_i,1,region)
+                ws.merge_cells(start_row=row_i,start_column=1,end_row=row_i,end_column=5)
 
-        # ----- REGION -----
-        ws.cell(row_i,1,region)
-        ws.merge_cells(start_row=row_i,start_column=1,end_row=row_i,end_column=5)
+                for c in range(1,6):
+                    ws.cell(row_i,c).fill = fill_region
 
-        for c in range(1,6):
-            ws.cell(row_i,c).fill = fill_region
+                ws.cell(row_i,1).alignment = Alignment(horizontal="center")
 
-        ws.cell(row_i,1).alignment = Alignment(horizontal="center")
+                row_i += 2
 
-        row_i += 2  # luft
+                for skola in skolor[skolor["Region"]==region]["Skolenhet"]:
 
-        # ----- SKOLOR -----
-        for skola in skolor[skolor["Region"]==region]["Skolenhet"]:
+                    start_block = row_i
 
-            start_block = row_i
+                    ws.cell(row_i,1,f"{skola} (max {kap[skola]})")
+                    ws.merge_cells(start_row=row_i,start_column=1,end_row=row_i,end_column=5)
 
-            # skolrubrik
-            ws.cell(row_i,1,f"{skola} (max {kap[skola]})")
-            ws.merge_cells(start_row=row_i,start_column=1,end_row=row_i,end_column=5)
+                    ws.cell(row_i,1).fill = fill_header
+                    row_i += 1
 
-            ws.cell(row_i,1).fill = fill_header
-            row_i += 1
+                    ws.append(["","År1","År2","År3","År4"])
 
-            # kolumnrubrik
-            headers = ["","År1","År2","År3","År4"]
-            ws.append(headers)
+                    for c in range(2,6):
+                        ws.cell(row_i,c).alignment = Alignment(horizontal="center")
 
-            for c in range(2,6):
-                ws.cell(row_i,c).alignment = Alignment(horizontal="center")
+                    row_i += 1
 
-            row_i += 1
+                    subset = df[
+                        (df["År1"]==skola)|
+                        (df["År2"]==skola)|
+                        (df["År3"]==skola)|
+                        (df["År4"]==skola)
+                    ]
 
-            # data
-            subset = df[
-                (df["År1"]==skola) |
-                (df["År2"]==skola) |
-                (df["År3"]==skola) |
-                (df["År4"]==skola)
-            ]
+                    for _, r in subset.iterrows():
+                        ws.append([
+                            "",
+                            r["Student"] if r["År1"]==skola else "",
+                            r["Student"] if r["År2"]==skola else "",
+                            r["Student"] if r["År3"]==skola else "",
+                            r["Student"] if r["År4"]==skola else "",
+                        ])
+                        row_i += 1
 
-            for _, r in subset.iterrows():
-                ws.append([
-                    "",
-                    r["Student"] if r["År1"]==skola else "",
-                    r["Student"] if r["År2"]==skola else "",
-                    r["Student"] if r["År3"]==skola else "",
-                    r["Student"] if r["År4"]==skola else "",
-                ])
-                row_i += 1
+                    end_block = row_i - 1
 
-            end_block = row_i - 1
+                    for r_i in range(start_block,end_block+1):
+                        for c_i in range(1,6):
+                            ws.cell(r_i,c_i).border = Border(
+                                left = medium if c_i==1 else thin,
+                                right = medium if c_i==5 else thin,
+                                top = medium if r_i==start_block else thin,
+                                bottom = medium if r_i==end_block else thin
+                            )
 
-            # ✅ RAM RUNT HELA TABELLEN
-            for r_i in range(start_block, end_block+1):
-                for c_i in range(1,6):
+                    row_i += 2
 
-                    cell = ws.cell(r_i,c_i)
+            # blad 2
+            ws2=wb.create_sheet("Studenter")
+            ws2.append(["Student","Ort","Region","År1","År2","År3","År4"])
+            for _,r in df.iterrows():
+                ws2.append(list(r))
 
-                    # ytterram
-                    border = Border(
-                        left = medium if c_i==1 else thin,
-                        right = medium if c_i==5 else thin,
-                        top = medium if r_i==start_block else thin,
-                        bottom = medium if r_i==end_block else thin
-                    )
-                    cell.border = border
+            # blad 3
+            ws3=wb.create_sheet("Kontroll")
+            ws3.append(["Student","Antal skolor","Status"])
 
-            row_i += 2  # luft mellan skolor
+            fill_ok=PatternFill("solid","C6EFCE")
+            fill_warn=PatternFill("solid","FFEB9C")
 
-    # -------- BLAD 2 --------
-    ws2 = wb.create_sheet("Studenter")
+            for _,r in df.iterrows():
+                skolset={r["År1"],r["År2"],r["År3"],r["År4"]}
+                skolset.discard("")
+                antal=len(skolset)
 
-    ws2.append(["Student","Ort","Region","År1","År2","År3","År4"])
+                if antal<2:
+                    status="⚠"
+                    color=fill_warn
+                else:
+                    status="OK"
+                    color=fill_ok
 
-    for _, r in df.iterrows():
-        ws2.append(list(r))
+                ws3.append([r["Student"],antal,status])
+                ws3.cell(ws3.max_row,3).fill=color
 
-    # -------- BLAD 3 --------
-    ws3 = wb.create_sheet("Kontroll")
+            # autobredd
+            for sheet in wb.worksheets:
+                for col in sheet.columns:
+                    length=max(len(str(cell.value)) if cell.value else 0 for cell in col)
+                    sheet.column_dimensions[get_column_letter(col[0].column)].width=length+3
 
-    ws3.append(["Student","Antal skolor","Status"])
-
-    fill_ok = PatternFill("solid","C6EFCE")
-    fill_warn = PatternFill("solid","FFEB9C")
-
-    for _, r in df.iterrows():
-
-        skolset = {r["År1"],r["År2"],r["År3"],r["År4"]}
-        skolset.discard("")
-        antal = len(skolset)
-
-        if antal < 2:
-            status = "⚠"
-            color = fill_warn
-        else:
-            status = "OK"
-            color = fill_ok
-
-        ws3.append([r["Student"], antal, status])
-
-        ws3.cell(ws3.max_row,3).fill = color
-
-    # -------- AUTOBREDD --------
-    for sheet in wb.worksheets:
-        for col in sheet.columns:
-            length = max(len(str(cell.value)) if cell.value else 0 for cell in col)
-            sheet.column_dimensions[get_column_letter(col[0].column)].width = length + 3
-
-    wb.save(output)
-    output.seek(0)
-
-    return output
-
+            wb.save(output)
+            output.seek(0)
+            return output
 
 
         st.session_state.excel_data = build_excel(export_df)
