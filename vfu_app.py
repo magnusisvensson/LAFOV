@@ -229,8 +229,7 @@ if file1 and file2:
         ws1.title = "Placeringar"
         ws1.append(cols)
 
-        for cell in ws1[1]:
-            cell.font = Font(bold=True)
+        for cell in ws1cell.font = Font(bold=True)
 
         for _, r in schema_df.iterrows():
             ws1.append(list(r))
@@ -239,8 +238,7 @@ if file1 and file2:
         ws2 = wb.create_sheet("Rapport")
         ws2.append(["Student", "AktivOrt", "Vald ort", "OK"])
 
-        for cell in ws2[1]:
-            cell.font = Font(bold=True)
+        for cell in ws2cell.font = Font(bold=True)
 
         for _, r in stud_df.iterrows():
             s = r["Student"]
@@ -256,8 +254,7 @@ if file1 and file2:
         ws3 = wb.create_sheet("Kontroll")
         ws3.append(["Student", "Status"])
 
-        for cell in ws3[1]:
-            cell.font = Font(bold=True)
+        for cell in ws3cell.font = Font(bold=True)
 
         for s in studenter:
             ws3.append([
