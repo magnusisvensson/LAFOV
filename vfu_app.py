@@ -3,7 +3,8 @@ import streamlit as st
 import pandas as pd
 from collections import defaultdict, deque
 from openpyxl import Workbook
-from openpyxl.styles import PatternFill
+from openpyxl.styles import PatternFill, Border, Side
+import random
 
 st.set_page_config(layout="wide")
 
@@ -39,6 +40,7 @@ def get_region(text):
         return "Oskarshamn"
     if any(x in t for x in ["karlskrona","ronneby","rödeby"]):
         return "Karlskrona"
+
     return "Kalmar"
 
 
@@ -49,20 +51,20 @@ if system_file and form_file:
     # =========================
     skolor = pd.read_excel(system_file)
     skolor.columns = skolor.columns.str.strip()
-
     skolor["Skolenhet"] = skolor["Skolenhet"].astype(str).str.strip()
+
     skolor = skolor[
         (
-            (skolor["Kull"]==kull) |
-            (skolor["Kull"].astype(str).str.upper()=="VAKANT")
+            (skolor["Kull"] == kull) |
+            (skolor["Kull"].astype(str).str.upper() == "VAKANT")
         ) &
-        (skolor["Inriktning"].str.upper()==program)
+        (skolor["Inriktning"].str.upper() == program)
     ].copy()
 
     skolor["Region"] = skolor["Partnerområde"].apply(get_region)
 
     kap = {}
-    for _,r in skolor.iterrows():
+    for _, r in skolor.iterrows():
         try:
             kap[r["Skolenhet"]] = int(float(r["Antal platser"]))
         except:
@@ -79,12 +81,12 @@ if system_file and form_file:
     ln=[c for c in students.columns if "efternamn" in c.lower()][0]
     bost=[c for c in students.columns if "bostads" in c.lower()][0]
 
-    students["Student"]=(students[fn]+" "+students[ln]).str.strip()
-    students["Ort"]=students[bost]
+    students["Student"] = (students[fn] + " " + students[ln]).str.strip()
+    students["Ort"] = students[bost]
 
 
     # =========================
-    # STEG 1
+    # STEG 1 – REGION
     # =========================
     if st.session_state.step == 1:
 
@@ -92,20 +94,20 @@ if system_file and form_file:
 
         temp = {}
 
-        for _,row in students.iterrows():
+        for _, row in students.iterrows():
 
-            name=row["Student"]
-            default=get_region(row["Ort"])
-            saved=st.session_state.student_regions.get(name,default)
+            name = row["Student"]
+            default = get_region(row["Ort"])
+            saved = st.session_state.student_regions.get(name, default)
 
-            region=st.selectbox(
+            region = st.selectbox(
                 f"{name} ({row['Ort']})",
                 ["Kalmar","Karlskrona","Oskarshamn"],
                 index=["Kalmar","Karlskrona","Oskarshamn"].index(saved),
                 key=f"reg_{name}"
             )
 
-            temp[name]=region
+            temp[name] = region
 
         if st.button("✅ Bekräfta regionval"):
             st.session_state.student_regions = temp
@@ -114,7 +116,7 @@ if system_file and form_file:
 
 
     # =========================
-    # STEG 2
+    # STEG 2 – PLACERING + PENDLING
     # =========================
     if st.session_state.step == 2:
 
@@ -126,98 +128,127 @@ if system_file and form_file:
 
         results = []
 
-        # kö per region
         region_queues = {
             r: deque(skolor[skolor["Region"]==r]["Skolenhet"].tolist())
             for r in ["Kalmar","Karlskrona","Oskarshamn"]
         }
 
-        for _,s in students.iterrows():
+        for _, s in students.iterrows():
 
-            student=s["Student"]
-            region=st.session_state.student_regions.get(student)
+            student = s["Student"]
+            region = st.session_state.student_regions.get(student)
 
             queue = region_queues[region]
-
-            # rotera
             queue.rotate(-1)
-            skolor_r=list(queue)
 
-            reject=st.session_state.rejected.get(student,[])
-            skolor_r=[sk for sk in skolor_r if sk not in reject]
+            skolor_r = list(queue)
 
-            # ✅ fallback garanterar plats
-            if len(skolor_r)<3:
-                skolor_r=list(queue)
+            reject = st.session_state.rejected.get(student, [])
+            skolor_r = [sk for sk in skolor_r if sk not in reject]
 
-            A=skolor_r[0]
-            B=skolor_r[1] if len(skolor_r)>1 else A
-            C=skolor_r[2] if len(skolor_r)>2 else B
+            if len(skolor_r) < 3:
+                skolor_r = list(queue)
 
-            # logik
-            if program=="LGFRI":
-                y1,y2,y3,y4=A,A,B,""
+            A = skolor_r[0]
+            B = skolor_r[1] if len(skolor_r) > 1 else A
+            C = skolor_r[2] if len(skolor_r) > 2 else B
+
+            if program == "LGFRI":
+                y1,y2,y3,y4 = A,A,B,""
             else:
-                if region=="Kalmar":
-                    y1,y2,y3,y4=A,B,B,C
+                if region == "Kalmar":
+                    y1,y2,y3,y4 = A,B,B,C
                 else:
-                    y1,y2,y3,y4=A,B,A,B
+                    y1,y2,y3,y4 = A,B,A,B
 
-            usage[y1]["År1"]+=1
-            usage[y2]["År2"]+=1
-            usage[y3]["År3"]+=1
-            if y4: usage[y4]["År4"]+=1
+            usage[y1]["År1"] += 1
+            usage[y2]["År2"] += 1
+            usage[y3]["År3"] += 1
+            if y4: usage[y4]["År4"] += 1
 
             results.append({
-                "Student":student,
-                "Ort":s["Ort"],
-                "Region":region,
-                "År1":y1,"År2":y2,"År3":y3,"År4":y4
+                "Student": student,
+                "Ort": s["Ort"],
+                "Region": region,
+                "År1": y1,
+                "År2": y2,
+                "År3": y3,
+                "År4": y4
             })
 
-        df=pd.DataFrame(results)
-
-        # =========================
-        # VISA FEL
-        # =========================
-        missing = df[df["År1"].isna()]
-        if not missing.empty:
-            st.error("❌ Studenter utan placering")
-            st.write(missing["Student"].tolist())
+        df = pd.DataFrame(results)
 
 
         # =========================
-        # EXCEL
+        # ✅ PENDLING (ÅTERSTÄLLD)
         # =========================
-        wb=Workbook()
-        ws=wb.active
-        ws.title="Placeringar"
+        st.subheader("🚶 Pendlingskontroll")
 
-        ws.append(["Skola","År1","År2","År3","År4"])
+        name = st.text_input("Sök student")
+
+        if name:
+
+            match = df[df["Student"].str.lower() == name.strip().lower()]
+
+            if not match.empty:
+
+                r = match.iloc[0]
+
+                for year in ["År1","År2","År3","År4"]:
+
+                    sk = r[year]
+
+                    if sk:
+
+                        val = st.radio(
+                            f"{year}: {sk}",
+                            ["Ja","Nej"],
+                            key=f"{r['Student']}_{year}"
+                        )
+
+                        if val == "Nej":
+                            st.session_state.rejected.setdefault(r["Student"], []).append(sk)
+                            st.rerun()
+
+
+        # =========================
+        # 📊 EXCEL MED RAMAR
+        # =========================
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Placeringar"
+
+        thin = Side(style="thin")
+        box = Border(top=thin, left=thin, right=thin, bottom=thin)
 
         fill_region = PatternFill("solid","D9EAF7")
+
+        ws.append(["Skola","År1","År2","År3","År4"])
 
         for region in ["Kalmar","Oskarshamn","Karlskrona"]:
 
             ws.append([region])
-            row=ws.max_row
-            ws.merge_cells(start_row=row,start_column=1,end_row=row,end_column=5)
+            r0 = ws.max_row
+            ws.merge_cells(start_row=r0,start_column=1,end_row=r0,end_column=5)
 
             for c in range(1,6):
-                ws.cell(row,c).fill=fill_region
+                ws.cell(r0,c).fill = fill_region
 
             for skola in skolor[skolor["Region"]==region]["Skolenhet"]:
 
+                start = ws.max_row+1
+
                 ws.append([f"{skola} (max {kap[skola]})"])
+                ws.append(["","År1","År2","År3","År4"])
 
-                subset=df[
-                    (df["År1"]==skola)|
-                    (df["År2"]==skola)|
-                    (df["År3"]==skola)|
+                subset = df[
+                    (df["År1"]==skola) |
+                    (df["År2"]==skola) |
+                    (df["År3"]==skola) |
                     (df["År4"]==skola)
-                ]
+                ].drop_duplicates("Student")
 
-                for _,r in subset.iterrows():
+                for _, r in subset.iterrows():
                     ws.append([
                         "",
                         r["Student"] if r["År1"]==skola else "",
@@ -226,44 +257,12 @@ if system_file and form_file:
                         r["Student"] if r["År4"]==skola else "",
                     ])
 
+                end = ws.max_row
 
-        # -------- STUDENTER --------
-        ws2=wb.create_sheet("Studenter")
-        ws2.append(["Student","Ort","Region","År1","År2","År3","År4"])
-
-        for _,r in df.iterrows():
-            ws2.append(list(r))
-
-
-        # -------- KONTROLL --------
-        ws3=wb.create_sheet("Kontroll")
-        ws3.append(["Student","Antal skolor","Status"])
-
-        fill_ok = PatternFill("solid","C6EFCE")
-        fill_warn = PatternFill("solid","FFEB9C")
-        fill_bad = PatternFill("solid","FFC7CE")
-
-        for _,r in df.iterrows():
-
-            skolset={r["År1"],r["År2"],r["År3"],r["År4"]}
-            skolset.discard("")
-
-            antal=len(skolset)
-
-            if r["År1"]=="":
-                status="❌"
-                color=fill_bad
-            elif antal<2:
-                status="⚠"
-                color=fill_warn
-            else:
-                status="OK"
-                color=fill_ok
-
-            ws3.append([r["Student"],antal,status])
-
-            row=ws3.max_row
-            ws3.cell(row,3).fill=color
+                # ✅ RAM
+                for rr in range(start,end+1):
+                    for cc in range(1,6):
+                        ws.cell(rr,cc).border = box
 
 
         file="kull_resultat.xlsx"
