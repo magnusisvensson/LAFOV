@@ -127,10 +127,6 @@ if system_file and form_file:
     # =========================
     if st.session_state.step == 2:
 
-        usage=defaultdict(lambda:{
-            "År1":0,"År2":0,"År3":0,"År4":0
-        })
-
         results=[]
 
         region_queues={
@@ -174,7 +170,7 @@ if system_file and form_file:
 
 
         # =========================
-        # 🆕 MANUELL EDITOR
+        # MANUELL EDITOR
         # =========================
         st.header("📝 Justera placering manuellt")
 
@@ -212,26 +208,49 @@ if system_file and form_file:
 
 
         # =========================
-        # ✅ BYGG DATA FÖR EXPORT
+        # SLÅ IHOP AUTO + MANUELLT ✅
         # =========================
-        export_df = pd.DataFrame([
-            {"Student":s, **yrs}
-            for s,yrs in st.session_state.manual_assignments.items()
-        ])
+        export_rows=[]
+
+        for _,r in df.iterrows():
+
+            student=r["Student"]
+
+            if student in st.session_state.manual_assignments:
+
+                merged={
+                    "Student":student,
+                    "Ort":r["Ort"],
+                    "Region":r["Region"],
+                    "År1":st.session_state.manual_assignments[student]["År1"],
+                    "År2":st.session_state.manual_assignments[student]["År2"],
+                    "År3":st.session_state.manual_assignments[student]["År3"],
+                    "År4":st.session_state.manual_assignments[student]["År4"],
+                }
+
+            else:
+                merged=r
+
+            export_rows.append(merged)
+
+        export_df=pd.DataFrame(export_rows)
 
 
         # =========================
-        # EXCEL
+        # EXCEL (3 BLAD ✅)
         # =========================
         def build_excel(df):
 
             output=BytesIO()
             wb=Workbook()
-            ws=wb.active
 
             thin=Side(style="thin")
             border=Border(top=thin,left=thin,right=thin,bottom=thin)
             fill=PatternFill("solid","D9EAF7")
+
+            # -------- PLACERINGAR --------
+            ws=wb.active
+            ws.title="Placeringar"
 
             row_i=1
 
@@ -278,16 +297,54 @@ if system_file and form_file:
                         for cc in range(1,6):
                             ws.cell(rr,cc).border=border
 
-            for col in ws.columns:
-                length=max(len(str(cell.value)) if cell.value else 0 for cell in col)
-                ws.column_dimensions[get_column_letter(col[0].column)].width=length+3
+
+            # -------- STUDENTER --------
+            ws2=wb.create_sheet("Studenter")
+            ws2.append(["Student","Ort","Region","År1","År2","År3","År4"])
+
+            for _,r in df.iterrows():
+                ws2.append(list(r))
+
+
+            # -------- KONTROLL --------
+            ws3=wb.create_sheet("Kontroll")
+            ws3.append(["Student","Antal skolor","Status"])
+
+            fill_ok=PatternFill("solid","C6EFCE")
+            fill_warn=PatternFill("solid","FFEB9C")
+
+            for _,r in df.iterrows():
+
+                skolset={r["År1"],r["År2"],r["År3"],r["År4"]}
+                skolset.discard("")
+
+                antal=len(skolset)
+
+                if antal<2:
+                    status="⚠"
+                    color=fill_warn
+                else:
+                    status="OK"
+                    color=fill_ok
+
+                ws3.append([r["Student"],antal,status])
+
+                row=ws3.max_row
+                ws3.cell(row,3).fill=color
+
+
+            # -------- AUTOBREDD --------
+            for sheet in wb.worksheets:
+                for col in sheet.columns:
+                    length=max(len(str(cell.value)) if cell.value else 0 for cell in col)
+                    sheet.column_dimensions[get_column_letter(col[0].column)].width=length+3
 
             wb.save(output)
             output.seek(0)
             return output
 
-        st.session_state.excel_data = build_excel(export_df)
 
+        st.session_state.excel_data = build_excel(export_df)
 
         if st.session_state.excel_data:
             st.download_button(
@@ -296,3 +353,4 @@ if system_file and form_file:
                 file_name="kull_resultat.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
