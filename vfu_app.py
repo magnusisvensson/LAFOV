@@ -4,7 +4,6 @@ import pandas as pd
 from collections import defaultdict, deque
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Border, Side
-import random
 
 st.set_page_config(layout="wide")
 
@@ -38,6 +37,7 @@ def get_region(text):
 
     if "oskarshamn" in t:
         return "Oskarshamn"
+
     if any(x in t for x in ["karlskrona","ronneby","rödeby"]):
         return "Karlskrona"
 
@@ -86,7 +86,7 @@ if system_file and form_file:
 
 
     # =========================
-    # STEG 1 – REGION
+    # STEG 1 – REGION (AUTO)
     # =========================
     if st.session_state.step == 1:
 
@@ -97,15 +97,28 @@ if system_file and form_file:
         for _, row in students.iterrows():
 
             name = row["Student"]
-            default = get_region(row["Ort"])
-            saved = st.session_state.student_regions.get(name, default)
+            ort_text = str(row["Ort"]).lower()
 
-            region = st.selectbox(
-                f"{name} ({row['Ort']})",
-                ["Kalmar","Karlskrona","Oskarshamn"],
-                index=["Kalmar","Karlskrona","Oskarshamn"].index(saved),
-                key=f"reg_{name}"
-            )
+            # ✅ AUTO
+            if "kalmar" in ort_text:
+                region = "Kalmar"
+
+            elif "karlskrona" in ort_text:
+                region = "Karlskrona"
+
+            elif "oskarshamn" in ort_text:
+                region = "Oskarshamn"
+
+            else:
+                default = get_region(row["Ort"])
+                saved = st.session_state.student_regions.get(name, default)
+
+                region = st.selectbox(
+                    f"{name} ({row['Ort']})",
+                    ["Kalmar","Karlskrona","Oskarshamn"],
+                    index=["Kalmar","Karlskrona","Oskarshamn"].index(saved),
+                    key=f"reg_{name}"
+                )
 
             temp[name] = region
 
@@ -116,7 +129,7 @@ if system_file and form_file:
 
 
     # =========================
-    # STEG 2 – PLACERING + PENDLING
+    # STEG 2 – PLACERING
     # =========================
     if st.session_state.step == 2:
 
@@ -143,15 +156,15 @@ if system_file and form_file:
 
             skolor_r = list(queue)
 
-            reject = st.session_state.rejected.get(student, [])
+            reject = st.session_state.rejected.get(student,[])
             skolor_r = [sk for sk in skolor_r if sk not in reject]
 
             if len(skolor_r) < 3:
                 skolor_r = list(queue)
 
             A = skolor_r[0]
-            B = skolor_r[1] if len(skolor_r) > 1 else A
-            C = skolor_r[2] if len(skolor_r) > 2 else B
+            B = skolor_r[1] if len(skolor_r)>1 else A
+            C = skolor_r[2] if len(skolor_r)>2 else B
 
             if program == "LGFRI":
                 y1,y2,y3,y4 = A,A,B,""
@@ -167,20 +180,17 @@ if system_file and form_file:
             if y4: usage[y4]["År4"] += 1
 
             results.append({
-                "Student": student,
-                "Ort": s["Ort"],
-                "Region": region,
-                "År1": y1,
-                "År2": y2,
-                "År3": y3,
-                "År4": y4
+                "Student":student,
+                "Ort":s["Ort"],
+                "Region":region,
+                "År1":y1,"År2":y2,"År3":y3,"År4":y4
             })
 
         df = pd.DataFrame(results)
 
 
         # =========================
-        # ✅ PENDLING (ÅTERSTÄLLD)
+        # PENDLING
         # =========================
         st.subheader("🚶 Pendlingskontroll")
 
@@ -188,7 +198,7 @@ if system_file and form_file:
 
         if name:
 
-            match = df[df["Student"].str.lower() == name.strip().lower()]
+            match = df[df["Student"].str.lower()==name.strip().lower()]
 
             if not match.empty:
 
@@ -212,14 +222,14 @@ if system_file and form_file:
 
 
         # =========================
-        # 📊 EXCEL MED RAMAR
+        # EXCEL
         # =========================
         wb = Workbook()
         ws = wb.active
         ws.title = "Placeringar"
 
         thin = Side(style="thin")
-        box = Border(top=thin, left=thin, right=thin, bottom=thin)
+        border = Border(top=thin,left=thin,right=thin,bottom=thin)
 
         fill_region = PatternFill("solid","D9EAF7")
 
@@ -259,10 +269,45 @@ if system_file and form_file:
 
                 end = ws.max_row
 
-                # ✅ RAM
                 for rr in range(start,end+1):
                     for cc in range(1,6):
-                        ws.cell(rr,cc).border = box
+                        ws.cell(rr,cc).border = border
+
+
+        # ----- STUDENTER -----
+        ws2 = wb.create_sheet("Studenter")
+        ws2.append(["Student","Ort","Region","År1","År2","År3","År4"])
+
+        for _, r in df.iterrows():
+            ws2.append(list(r))
+
+
+        # ----- KONTROLL -----
+        ws3 = wb.create_sheet("Kontroll")
+        ws3.append(["Student","Antal skolor","Status"])
+
+        fill_ok = PatternFill("solid","C6EFCE")
+        fill_warn = PatternFill("solid","FFEB9C")
+        fill_bad = PatternFill("solid","FFC7CE")
+
+        for _, r in df.iterrows():
+
+            skolset={r["År1"],r["År2"],r["År3"],r["År4"]}
+            skolset.discard("")
+
+            antal=len(skolset)
+
+            if antal < 2:
+                status="⚠"
+                color=fill_warn
+            else:
+                status="OK"
+                color=fill_ok
+
+            ws3.append([r["Student"], antal, status])
+
+            row = ws3.max_row
+            ws3.cell(row,3).fill=color
 
 
         file="kull_resultat.xlsx"
